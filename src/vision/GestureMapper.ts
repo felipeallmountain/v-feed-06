@@ -55,9 +55,13 @@ export class GestureMapper {
     );
     const torsoArea = shoulderWidth * torsoHeight;
 
-    // Map torso area → approximate distance meters (1m–3m)
-    // Larger area = closer. Empirically clamped.
-    const rawDistance = THREE_CLAMP(2.8 - torsoArea * 8.5, 0.8, 3.2);
+    const scale = store.tracking.distanceScale ?? 8.5;
+    const offset = store.tracking.distanceOffset ?? 2.8;
+    const minD = store.tracking.minDistance ?? 1.0;
+    const maxD = store.tracking.maxDistance ?? 3.0;
+
+    // Map torso area → approximate distance meters based on user calibration
+    const rawDistance = THREE_CLAMP(offset - torsoArea * scale, minD - 0.2, maxD + 0.2);
     this.smoothedDistance = lerp(this.smoothedDistance, rawDistance, 0.15);
 
     const leftWrist = lm[15];
@@ -89,8 +93,9 @@ export class GestureMapper {
       rightHand,
     });
 
-    // FR-03.2 Proximity Tuning: 3m → noise, 1m → lock
-    const proximity = THREE_CLAMP(1 - (this.smoothedDistance - 1) / 2, 0, 1);
+    // Proximity Tuning based on calibrated min/max distance thresholds
+    const distRange = Math.max(maxD - minD, 0.1);
+    const proximity = THREE_CLAMP(1 - (this.smoothedDistance - minD) / distRange, 0, 1);
     const signalLock = proximity * proximity;
     const noiseGain = THREE_CLAMP(1 - signalLock * 0.95, 0.02, 1);
 

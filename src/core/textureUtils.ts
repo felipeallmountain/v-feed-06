@@ -25,15 +25,14 @@ export function createPhosphorMaskDataUrl(): string {
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
   const pixels = ctx.createImageData(3, 1);
-  // R G B aperture grille triad
   pixels.data.set([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
   ctx.putImageData(pixels, 0, 0);
   return canvas.toDataURL('image/png');
 }
 
 export function createCalibrationGridDataUrl(
-  width = 1080,
-  height = 1920,
+  width: number,
+  height: number,
 ): string {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -44,35 +43,44 @@ export function createCalibrationGridDataUrl(
   ctx.fillStyle = '#101010';
   ctx.fillRect(0, 0, width, height);
 
-  const cols = 2;
-  const rows = 3;
-  const cellW = width / cols;
-  const cellH = height / rows;
-  const labels = ['CRT 1', 'CRT 2', 'CRT 3', 'CRT 4', 'CRT 5', 'CRT 6'];
+  const pad = Math.min(width, height) * 0.04;
+  const lineW = Math.max(2, Math.min(width, height) * 0.003);
+  const fontSize = Math.max(20, Math.min(width, height) * 0.035);
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const i = r * cols + c;
-      const x = c * cellW;
-      const y = r * cellH;
-      ctx.strokeStyle = i % 2 === 0 ? '#3ddc97' : '#f0a500';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(x + 8, y + 8, cellW - 16, cellH - 16);
+  ctx.strokeStyle = '#3ddc97';
+  ctx.lineWidth = lineW;
+  ctx.strokeRect(pad, pad, width - pad * 2, height - pad * 2);
 
-      ctx.fillStyle = '#e8e4d9';
-      ctx.font = '48px monospace';
-      ctx.fillText(labels[i], x + 40, y + 80);
+  ctx.strokeStyle = 'rgba(232,228,217,0.35)';
+  ctx.lineWidth = lineW;
+  ctx.beginPath();
+  ctx.moveTo(width / 2, pad);
+  ctx.lineTo(width / 2, height - pad);
+  ctx.moveTo(pad, height / 2);
+  ctx.lineTo(width - pad, height / 2);
+  ctx.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(x, y + cellH / 2);
-      ctx.lineTo(x + cellW, y + cellH / 2);
-      ctx.moveTo(x + cellW / 2, y);
-      ctx.lineTo(x + cellW / 2, y + cellH);
-      ctx.strokeStyle = 'rgba(232,228,217,0.35)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+  const markerLen = Math.min(width, height) * 0.06;
+  const corners: [number, number, number, number][] = [
+    [pad, pad, 1, 1],
+    [width - pad, pad, -1, 1],
+    [pad, height - pad, 1, -1],
+    [width - pad, height - pad, -1, -1],
+  ];
+  ctx.strokeStyle = '#f0a500';
+  ctx.lineWidth = lineW * 1.5;
+  for (const [cx, cy, dx, dy] of corners) {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + markerLen * dx, cy);
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx, cy + markerLen * dy);
+    ctx.stroke();
   }
+
+  ctx.fillStyle = '#e8e4d9';
+  ctx.font = `${fontSize}px monospace`;
+  ctx.fillText('CALIBRATION', pad * 2, pad * 2 + fontSize);
 
   return canvas.toDataURL('image/png');
 }

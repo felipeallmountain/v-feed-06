@@ -6,12 +6,12 @@ float hash21(vec2 p) {
   return fract(p.x * p.y);
 }
 
-float analogNoise(vec2 uv, float time) {
-  return hash21(uv * vec2(1080.0, 1920.0) + fract(time) * 100.0);
+float analogNoise(vec2 uv, float time, vec2 resolution) {
+  return hash21(uv * resolution + fract(time) * 100.0);
 }
 
-vec3 mixSnow(vec3 color, vec2 uv, float gain, float lock, float time) {
-  float n = analogNoise(uv, time);
+vec3 mixSnow(vec3 color, vec2 uv, float gain, float lock, float time, vec2 resolution) {
+  float n = analogNoise(uv, time, resolution);
   vec3 snow = vec3(n);
   float snowMix = clamp(gain * (1.0 - lock), 0.0, 1.0);
   return mix(color, snow, snowMix);

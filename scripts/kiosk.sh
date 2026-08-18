@@ -51,5 +51,4 @@ exec "$CHROME" \
   --disable-infobars \
   --disable-session-crashed-bubble \
   --autoplay-policy=no-user-gesture-required \
-  --window-size=1080,1920 \
   "${URL}"

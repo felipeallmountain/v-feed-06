@@ -1,13 +1,20 @@
 import * as THREE from 'three';
+import { DEFAULT_VIDEO_ASPECT } from '../core/constants';
 
 export class VideoTexturePass {
   readonly video: HTMLVideoElement;
   readonly texture: THREE.VideoTexture;
   private gridTexture: THREE.Texture | null = null;
   private usingGrid = false;
+  private onAspectChange: (aspect: number) => void;
+  private metadataHandler: () => void;
 
-  constructor(video: HTMLVideoElement) {
+  constructor(
+    video: HTMLVideoElement,
+    onAspectChange: (aspect: number) => void = () => undefined,
+  ) {
     this.video = video;
+    this.onAspectChange = onAspectChange;
     this.video.playsInline = true;
     this.video.muted = true;
     this.video.loop = false;
@@ -18,12 +25,26 @@ export class VideoTexturePass {
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.generateMipmaps = false;
+
+    this.metadataHandler = () => this.updateAspect();
+    this.video.addEventListener('loadedmetadata', this.metadataHandler);
+    this.updateAspect();
+  }
+
+  private updateAspect(): void {
+    const { videoWidth, videoHeight } = this.video;
+    const aspect =
+      videoWidth > 0 && videoHeight > 0
+        ? videoWidth / videoHeight
+        : DEFAULT_VIDEO_ASPECT;
+    this.onAspectChange(aspect);
   }
 
   async loadUrl(url: string): Promise<void> {
     this.usingGrid = false;
     if (this.video.src === url && !this.video.error) {
       await this.video.play().catch(() => undefined);
+      this.updateAspect();
       return;
     }
     this.video.src = url;
@@ -44,6 +65,7 @@ export class VideoTexturePass {
       this.video.addEventListener('canplay', onReady, { once: true });
       this.video.addEventListener('error', onError, { once: true });
     });
+    this.updateAspect();
     await this.video.play().catch(() => undefined);
   }
 
@@ -70,6 +92,7 @@ export class VideoTexturePass {
   }
 
   dispose(): void {
+    this.video.removeEventListener('loadedmetadata', this.metadataHandler);
     this.texture.dispose();
     this.gridTexture?.dispose();
   }

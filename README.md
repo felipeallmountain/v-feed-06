@@ -1,6 +1,6 @@
 # V-FEED [06]
 
-Interactive transmedia CRT installation — YouTube Shorts / local vertical video through a 1080×1920 WebGL CRT pipeline, driven by MediaPipe body tracking (human antenna).
+Interactive transmedia CRT installation — YouTube Shorts / local vertical video through a full-viewport WebGL CRT pipeline, driven by MediaPipe body tracking (human antenna).
 
 ## Stack
 
@@ -43,10 +43,10 @@ Click once to unlock audio + camera. Press `H` or `Ctrl+Shift+C` for the calibra
 ```bash
 npm run build
 npm start          # http://localhost:3000
-npm run kiosk      # Chromium --kiosk at 1080×1920
+npm run kiosk      # Chromium fullscreen kiosk
 ```
 
-Output canvas is **1080×1920** (2×3 cells of 540×640). Use a video wall controller / multi-HDMI layout to map the extended desktop onto six CRTs. Tune **Bezel compensation** in the HUD so motion bridges physical frames.
+The canvas fills the browser viewport as a **single continuous output signal**. A video wall controller or analog splitter handles the physical 2×3 CRT matrix externally — the app does not simulate six screens in software.
 
 ## Interaction (Human Antenna)
 
@@ -54,7 +54,7 @@ Output canvas is **1080×1920** (2×3 cells of 540×640). Use a video wall contr
 | :--- | :--- |
 | No presence (>5s) | Analog snow + V-Hold roll |
 | Approach 3m→1m | Noise drops, signal locks |
-| Hand in air | Localized ripple on corresponding CRT cell |
+| Hand in air | Localized ripple at hand position |
 | Fast motion | RGB split + horizontal tear |
 
 Camera frames are processed in memory only — nothing is stored or uploaded.

@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { AudioEngine } from '../audio/AudioEngine';
+import { getViewportSize } from '../core/constants';
 import {
   createCalibrationGridDataUrl,
   createNoiseDataUrl,
 } from '../core/textureUtils';
 import { useAppStore } from '../core/StateManager';
 import { SceneManager } from '../rendering/SceneManager';
+import { SkeletonOverlay } from '../rendering/SkeletonOverlay';
 import { CalibrationHUD } from '../ui/CalibrationHUD';
 import { DebugView } from '../ui/DebugView';
 import { VideoQueue } from '../video/VideoQueue';
@@ -26,6 +28,7 @@ export class App {
   private audio = new AudioEngine();
   private hud = new CalibrationHUD();
   private debug: DebugView | null = null;
+  private skeleton: SkeletonOverlay | null = null;
   private raf = 0;
   private lastTs = 0;
   private running = false;
@@ -34,9 +37,12 @@ export class App {
   private hint: HTMLElement | null = null;
   private allowBtn: HTMLButtonElement | null = null;
   private diagEl: HTMLElement | null = null;
+  private gridTex: THREE.Texture | null = null;
+  private resizeHandler: (() => void) | null = null;
 
   async start(): Promise<void> {
     const canvas = document.querySelector<HTMLCanvasElement>('#stage');
+    const skeletonCanvas = document.querySelector<HTMLCanvasElement>('#skeleton-stage');
     const feedVideo = document.querySelector<HTMLVideoElement>('#feed-video');
     const webcam = document.querySelector<HTMLVideoElement>('#webcam');
     const debugCanvas = document.querySelector<HTMLCanvasElement>('#debug-overlay');
@@ -44,19 +50,28 @@ export class App {
     this.allowBtn = document.querySelector<HTMLButtonElement>('#allow-camera');
     this.diagEl = document.querySelector<HTMLElement>('#boot-diag');
 
-    if (!canvas || !feedVideo || !webcam || !debugCanvas) {
+    if (!canvas || !skeletonCanvas || !feedVideo || !webcam || !debugCanvas) {
       throw new Error('Missing required DOM nodes');
     }
 
     this.scene = new SceneManager(canvas, feedVideo);
+    this.skeleton = new SkeletonOverlay(skeletonCanvas);
     this.scene.setNoiseTexture(createNoiseDataUrl(256));
 
-    const gridUrl = createCalibrationGridDataUrl();
+    const { width, height } = getViewportSize();
+    const gridUrl = createCalibrationGridDataUrl(width, height);
     const gridTex = await new Promise<THREE.Texture>((resolve, reject) => {
       new THREE.TextureLoader().load(gridUrl, resolve, undefined, reject);
     });
     gridTex.colorSpace = THREE.SRGBColorSpace;
+    this.gridTex = gridTex;
     this.scene.setGridTexture(gridTex);
+
+    this.resizeHandler = () => {
+      void this.refreshGridTexture();
+      this.skeleton?.resize();
+    };
+    window.addEventListener('resize', this.resizeHandler);
 
     this.camera = new CameraManager(webcam);
     this.tracker = new MediaPipeTracker();
@@ -73,9 +88,6 @@ export class App {
     useAppStore.subscribe((state, prev) => {
       if (state.tracking.mirrorCamera !== prev.tracking.mirrorCamera) {
         this.camera?.setMirror(state.tracking.mirrorCamera);
-      }
-      if (state.debugFit !== prev.debugFit) {
-        this.scene?.fitToWindow();
       }
     });
 
@@ -105,11 +117,25 @@ export class App {
         }
       }
 
+      this.skeleton?.draw(frame);
       this.scene?.render();
       this.debug?.draw(frame, webcam);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  private async refreshGridTexture(): Promise<void> {
+    if (!this.scene) return;
+    const { width, height } = getViewportSize();
+    const gridUrl = createCalibrationGridDataUrl(width, height);
+    const gridTex = await new Promise<THREE.Texture>((resolve, reject) => {
+      new THREE.TextureLoader().load(gridUrl, resolve, undefined, reject);
+    });
+    gridTex.colorSpace = THREE.SRGBColorSpace;
+    this.gridTex?.dispose();
+    this.gridTex = gridTex;
+    this.scene.setGridTexture(gridTex);
   }
 
   private async refreshDiagnostics(): Promise<void> {
@@ -163,7 +189,9 @@ export class App {
     }
 
     this.hint?.classList.add('hidden');
-    document.body.classList.add('kiosk-cursor-hidden');
+    if (!import.meta.env.DEV) {
+      document.body.classList.add('kiosk-cursor-hidden');
+    }
 
     try {
       await this.audio.unlock();
@@ -185,6 +213,10 @@ export class App {
   dispose(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+    }
+    this.gridTex?.dispose();
     this.hud.dispose();
     this.videoQueue.dispose();
     this.audio.dispose();

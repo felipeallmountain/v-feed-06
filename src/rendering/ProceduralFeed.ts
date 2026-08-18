@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { CANVAS_HEIGHT, CANVAS_WIDTH } from '../core/constants';
 
 /**
  * Animated vertical canvas feed used when no MP4 cache is present.
@@ -12,10 +11,10 @@ export class ProceduralFeed {
   private running = false;
   private t0 = performance.now();
 
-  constructor() {
+  constructor(width: number, height: number) {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = CANVAS_WIDTH;
-    this.canvas.height = CANVAS_HEIGHT;
+    this.canvas.width = width;
+    this.canvas.height = height;
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('2d context unavailable');
     this.ctx = ctx;
@@ -24,6 +23,13 @@ export class ProceduralFeed {
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.generateMipmaps = false;
+  }
+
+  resize(width: number, height: number): void {
+    if (this.canvas.width === width && this.canvas.height === height) return;
+    this.canvas.width = width;
+    this.canvas.height = height;
+    this.texture.needsUpdate = true;
   }
 
   start(): void {
@@ -55,35 +61,29 @@ export class ProceduralFeed {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
 
-    // Scrolling "short" content blocks
-    for (let i = 0; i < 6; i++) {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const x = col * (w / 2);
-      const y = row * (h / 3);
-      const cw = w / 2;
-      const ch = h / 3;
-      ctx.strokeStyle = i % 2 === 0 ? '#3ddc97' : '#f0a500';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x + 16, y + 16, cw - 32, ch - 32);
-      ctx.fillStyle = 'rgba(232,228,217,0.85)';
-      ctx.font = '42px monospace';
-      ctx.fillText(`FEED ${(i + 1).toString().padStart(2, '0')}`, x + 36, y + 70);
-      ctx.font = '22px monospace';
-      ctx.fillStyle = 'rgba(232,228,217,0.45)';
-      ctx.fillText('V-FEED [06] · procedural', x + 36, y + 110);
+    const pad = Math.min(w, h) * 0.04;
+    ctx.strokeStyle = '#3ddc97';
+    ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.004);
+    ctx.strokeRect(pad, pad, w - pad * 2, h - pad * 2);
 
-      const barY = y + ch * 0.55 + Math.sin(t * 2 + i) * 40;
-      ctx.fillStyle = `hsla(${(t * 40 + i * 40) % 360}, 70%, 55%, 0.7)`;
-      ctx.fillRect(x + 40, barY, cw - 80, 18);
-    }
-
-    // Moving ticker
+    const fontSize = Math.max(24, Math.min(w, h) * 0.04);
     ctx.fillStyle = '#e8e4d9';
-    ctx.font = '28px monospace';
+    ctx.font = `${fontSize}px monospace`;
+    ctx.fillText('V-FEED [06]', pad * 2, pad * 2 + fontSize);
+
+    ctx.font = `${fontSize * 0.55}px monospace`;
+    ctx.fillStyle = 'rgba(232,228,217,0.45)';
+    ctx.fillText('procedural feed', pad * 2, pad * 2 + fontSize * 1.7);
+
+    const barY = h * 0.55 + Math.sin(t * 2) * h * 0.04;
+    ctx.fillStyle = `hsla(${(t * 40) % 360}, 70%, 55%, 0.7)`;
+    ctx.fillRect(pad * 2, barY, w - pad * 4, fontSize * 0.5);
+
+    ctx.fillStyle = '#e8e4d9';
+    ctx.font = `${fontSize * 0.65}px monospace`;
     const msg = '  HUMAN ANTENNA  ·  ANALOG LOCK  ·  SHORTS → CRT  ·';
     const scroll = ((t * 80) % (ctx.measureText(msg).width + w)) - w;
-    ctx.fillText(msg + msg, scroll, h - 48);
+    ctx.fillText(msg + msg, scroll, h - pad * 2);
   }
 
   dispose(): void {

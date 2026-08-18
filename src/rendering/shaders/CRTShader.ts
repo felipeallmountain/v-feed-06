@@ -16,13 +16,13 @@ vec2 crtCurve(vec2 uv, float amount) {
   return uv;
 }
 
-float scanlines(vec2 uv, float intensity, float time) {
-  float line = sin(uv.y * 960.0 + time * 8.0) * 0.5 + 0.5;
+float scanlines(vec2 uv, float intensity, float time, vec2 resolution) {
+  float line = sin(uv.y * resolution.y * 0.5 + time * 8.0) * 0.5 + 0.5;
   return mix(1.0, 0.65 + 0.35 * line, intensity);
 }
 
-vec3 phosphor(vec3 color, vec2 uv, float amount) {
-  float mask = fract(uv.x * 540.0);
+vec3 phosphor(vec3 color, vec2 uv, float amount, vec2 resolution) {
+  float mask = fract(uv.x * resolution.x * 0.5);
   vec3 triad = mask < 0.33 ? vec3(1.0, 0.15, 0.15)
              : mask < 0.66 ? vec3(0.15, 1.0, 0.15)
                            : vec3(0.15, 0.15, 1.0);
