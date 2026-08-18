@@ -1,0 +1,2 @@
+# Place phosphor mask / noise PNGs here if you want to override procedural textures.
+# The runtime generates textures in-memory by default.

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Permissions-Policy" content="camera=(self), microphone=()" />
+    <title>V-FEED [06]</title>
+    <link rel="stylesheet" href="/src/assets/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="stage"></canvas>
+      <video id="feed-video" playsinline muted crossorigin="anonymous"></video>
+      <video id="webcam" autoplay playsinline muted></video>
+      <canvas id="debug-overlay"></canvas>
+      <div id="boot-hint">
+        <div class="boot-title">V-FEED [06]</div>
+        <p class="boot-copy">Camera access is required for the human-antenna interaction.</p>
+        <button type="button" id="allow-camera">Allow camera</button>
+        <pre id="boot-diag" class="boot-diag" aria-live="polite"></pre>
+        <p class="hint-sub">
+          Use Google Chrome at <code>http://localhost:5173</code> — not Cursor’s preview browser.
+        </p>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
