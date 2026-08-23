@@ -6,6 +6,10 @@ import {
   MAX_DEVICE_PIXEL_RATIO,
 } from '../core/constants';
 import { useAppStore } from '../core/StateManager';
+import {
+  computeAllScreenCorners,
+  createDefaultCornerOffsets,
+} from './MatrixSplitter';
 import { ProceduralFeed } from './ProceduralFeed';
 import { VideoTexturePass } from './VideoTexturePass';
 import {
@@ -44,16 +48,42 @@ export class SceneManager {
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
     );
 
+    const initialCorners = computeAllScreenCorners(
+      0.024,
+      0.024,
+      0.018,
+      createDefaultCornerOffsets(),
+    );
+
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         tDiffuse: { value: null as unknown as THREE.Texture },
         tNoise: { value: this.noiseTexture },
         uTime: { value: 0 },
+        uMatrixSplit: { value: 1.0 },
+        uBezelWidthX: { value: 0.024 },
+        uBezelWidthY: { value: 0.024 },
+        uBezelOuter: { value: 0.018 },
+        uBezelComp: { value: 0.65 },
+        uCornerRounding: { value: 0.08 },
+        uBezelChassis: { value: 1.0 },
+        uPerScreenVariance: { value: 0.35 },
+        uGlobalFlipH: { value: 0.0 },
+        uGlobalFlipV: { value: 0.0 },
+        uGlobalRotation: { value: 0.0 },
+        uScreenFlips: {
+          value: Array.from({ length: 6 }, () => new THREE.Vector2(0, 0)),
+        },
+        uScreenRotations: {
+          value: new Float32Array(6),
+        },
+        uCorners: { value: initialCorners },
+        uShowCornerHandles: { value: 0.0 },
         uCurvature: { value: 0.18 },
-        uTubeCurve: { value: 0 },
-        uScanline: { value: 0.08 },
-        uPhosphor: { value: 0 },
-        uVignette: { value: 0 },
+        uTubeCurve: { value: 1.0 },
+        uScanline: { value: 0.45 },
+        uPhosphor: { value: 0.3 },
+        uVignette: { value: 0.4 },
         uRgbSplit: { value: 0 },
         uVHold: { value: 0 },
         uHJitter: { value: 0 },
@@ -123,7 +153,7 @@ export class SceneManager {
       ? state.tracking.rightHand
       : state.tracking.leftHand;
     const center = hand.active
-      ? { x: hand.x, y: hand.y }
+      ? { x: hand.x, y: 1.0 - hand.y }
       : { x: 0.5, y: 0.5 };
 
     const gridMode = state.videoMode === 'grid';
@@ -140,10 +170,44 @@ export class SceneManager {
       coverSample = 1;
     }
 
+    const updatedCorners = computeAllScreenCorners(
+      sh.bezelWidthX,
+      sh.bezelWidthY,
+      sh.bezelOuter,
+      sh.cornerOffsets,
+    );
+    (window as any).__vfeed_last_corners = updatedCorners;
+    const cornerUniform = this.material.uniforms.uCorners.value as THREE.Vector2[];
+    for (let i = 0; i < 24; i++) {
+      cornerUniform[i].copy(updatedCorners[i]);
+    }
+    this.material.uniforms.uShowCornerHandles.value = sh.showCornerHandles ? 1.0 : 0.0;
+
+    this.material.uniforms.uGlobalFlipH.value = sh.globalFlipH ? 1.0 : 0.0;
+    this.material.uniforms.uGlobalFlipV.value = sh.globalFlipV ? 1.0 : 0.0;
+    const deg2rad = Math.PI / 180.0;
+    this.material.uniforms.uGlobalRotation.value = ((sh.globalRotation || 0) + (sh.globalFineRotation || 0)) * deg2rad;
+
+    const screenFlipsUniform = this.material.uniforms.uScreenFlips.value as THREE.Vector2[];
+    const screenRotUniform = this.material.uniforms.uScreenRotations.value as Float32Array;
+    for (let i = 0; i < 6; i++) {
+      const sf = sh.screenFlips[i] ?? { flipH: false, flipV: false, rotation: 0, fineRotation: 0 };
+      screenFlipsUniform[i].set(sf.flipH ? 1.0 : 0.0, sf.flipV ? 1.0 : 0.0);
+      screenRotUniform[i] = ((sf.rotation || 0) + (sf.fineRotation || 0)) * deg2rad;
+    }
+
     this.material.uniforms.tDiffuse.value = diffuse;
     this.material.uniforms.uTime.value = t;
+    this.material.uniforms.uMatrixSplit.value = sh.matrixSplit ? 1.0 : 0.0;
+    this.material.uniforms.uBezelWidthX.value = sh.bezelWidthX;
+    this.material.uniforms.uBezelWidthY.value = sh.bezelWidthY;
+    this.material.uniforms.uBezelOuter.value = sh.bezelOuter;
+    this.material.uniforms.uBezelComp.value = sh.bezelComp;
+    this.material.uniforms.uCornerRounding.value = sh.cornerRounding;
+    this.material.uniforms.uBezelChassis.value = sh.bezelChassis ? 1.0 : 0.0;
+    this.material.uniforms.uPerScreenVariance.value = sh.perScreenVariance;
     this.material.uniforms.uCurvature.value = sh.curvature;
-    this.material.uniforms.uTubeCurve.value = sh.tubeCurve ? 1 : 0;
+    this.material.uniforms.uTubeCurve.value = sh.tubeCurve ? 1.0 : 0.0;
     this.material.uniforms.uScanline.value = sh.scanlineIntensity;
     this.material.uniforms.uPhosphor.value = sh.phosphorMask;
     this.material.uniforms.uVignette.value = sh.vignette;

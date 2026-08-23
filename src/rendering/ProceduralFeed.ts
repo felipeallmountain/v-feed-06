@@ -55,35 +55,121 @@ export class ProceduralFeed {
     const w = canvas.width;
     const h = canvas.height;
 
-    const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, `hsl(${(t * 20) % 360}, 35%, 12%)`);
-    g.addColorStop(1, `hsl(${(t * 20 + 80) % 360}, 40%, 8%)`);
-    ctx.fillStyle = g;
+    ctx.fillStyle = '#050508';
     ctx.fillRect(0, 0, w, h);
 
-    const pad = Math.min(w, h) * 0.04;
-    ctx.strokeStyle = '#3ddc97';
-    ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.004);
-    ctx.strokeRect(pad, pad, w - pad * 2, h - pad * 2);
+    const colW = w / 2;
+    const rowH = h / 3;
+    const pad = Math.min(colW, rowH) * 0.055;
+    const innerW = colW - pad * 2;
+    const innerH = rowH - pad * 2;
+    const lineW = Math.max(2, Math.min(colW, rowH) * 0.008);
+    const fontSize = Math.max(13, Math.min(colW, rowH) * 0.065);
 
-    const fontSize = Math.max(24, Math.min(w, h) * 0.04);
-    ctx.fillStyle = '#e8e4d9';
-    ctx.font = `${fontSize}px monospace`;
-    ctx.fillText('V-FEED [06]', pad * 2, pad * 2 + fontSize);
+    const labels: [string, string][] = [
+      ['V-FEED [01]', 'TOP-LEFT · RF-A'],
+      ['V-FEED [02]', 'TOP-RIGHT · RF-B'],
+      ['V-FEED [03]', 'MID-LEFT · OSC-1'],
+      ['V-FEED [04]', 'MID-RIGHT · OSC-2'],
+      ['V-FEED [05]', 'BOT-LEFT · SYNC-L'],
+      ['V-FEED [06]', 'BOT-RIGHT · SYNC-R'],
+    ];
 
-    ctx.font = `${fontSize * 0.55}px monospace`;
-    ctx.fillStyle = 'rgba(232,228,217,0.45)';
-    ctx.fillText('procedural feed', pad * 2, pad * 2 + fontSize * 1.7);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 2; c++) {
+        const idx = r * 2 + c;
+        const [tag, sub] = labels[idx];
+        const cx = c * colW;
+        const cy = r * rowH;
 
-    const barY = h * 0.55 + Math.sin(t * 2) * h * 0.04;
-    ctx.fillStyle = `hsla(${(t * 40) % 360}, 70%, 55%, 0.7)`;
-    ctx.fillRect(pad * 2, barY, w - pad * 4, fontSize * 0.5);
+        // Subtle gradient background per piece
+        const g = ctx.createLinearGradient(cx, cy, cx + colW, cy + rowH);
+        g.addColorStop(0, `hsl(${((t * 15 + idx * 45) % 360)}, 30%, 10%)`);
+        g.addColorStop(1, `hsl(${((t * 15 + idx * 45 + 50) % 360)}, 35%, 6%)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(cx + pad * 0.5, cy + pad * 0.5, colW - pad, rowH - pad);
 
-    ctx.fillStyle = '#e8e4d9';
-    ctx.font = `${fontSize * 0.65}px monospace`;
-    const msg = '  HUMAN ANTENNA  ·  ANALOG LOCK  ·  SHORTS → CRT  ·';
-    const scroll = ((t * 80) % (ctx.measureText(msg).width + w)) - w;
-    ctx.fillText(msg + msg, scroll, h - pad * 2);
+        // Green Phosphor Frame for this piece
+        ctx.strokeStyle = '#3ddc97';
+        ctx.lineWidth = lineW;
+        ctx.strokeRect(cx + pad, cy + pad, innerW, innerH);
+
+        // Corner brackets on each piece's frame
+        const bracketLen = Math.min(colW, rowH) * 0.08;
+        const corners: [number, number, number, number][] = [
+          [cx + pad, cy + pad, 1, 1],
+          [cx + colW - pad, cy + pad, -1, 1],
+          [cx + pad, cy + rowH - pad, 1, -1],
+          [cx + colW - pad, cy + rowH - pad, -1, -1],
+        ];
+        ctx.strokeStyle = '#3ddc97';
+        ctx.lineWidth = lineW * 1.6;
+        for (const [bx, by, dx, dy] of corners) {
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx + bracketLen * dx, by);
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx, by + bracketLen * dy);
+          ctx.stroke();
+        }
+
+        // Header Title in each piece
+        ctx.fillStyle = '#3ddc97';
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.fillText(tag, cx + pad + 8, cy + pad + fontSize + 4);
+
+        ctx.fillStyle = 'rgba(232, 228, 217, 0.6)';
+        ctx.font = `${fontSize * 0.68}px monospace`;
+        ctx.fillText(sub, cx + pad + 8, cy + pad + fontSize * 2.0 + 4);
+
+        // Piece-specific procedural graphics
+        if (r === 0) {
+          // Top Screens: Dynamic animated spectrum bars
+          const numBars = 8;
+          const barWidth = (innerW - 16) / numBars;
+          const baseY = cy + rowH - pad - 12;
+          for (let b = 0; b < numBars; b++) {
+            const barH = (Math.sin(t * 3.5 + b * 0.8 + idx) * 0.5 + 0.5) * (innerH * 0.35);
+            ctx.fillStyle = `hsla(${((t * 25 + b * 20) % 360)}, 75%, 55%, 0.8)`;
+            ctx.fillRect(cx + pad + 8 + b * barWidth, baseY - barH, barWidth - 4, barH);
+          }
+        } else if (r === 1) {
+          // Middle Screens: Oscilloscope waveform
+          ctx.strokeStyle = '#3ddc97';
+          ctx.lineWidth = Math.max(1.5, lineW * 0.8);
+          ctx.beginPath();
+          const waveMidY = cy + rowH * 0.55;
+          const waveAmp = innerH * 0.18;
+          for (let x = 0; x < innerW - 16; x += 3) {
+            const normX = x / (innerW - 16);
+            const y = waveMidY + Math.sin(normX * Math.PI * 4 + t * 4 + idx * 2) * waveAmp * Math.cos(normX * Math.PI + t);
+            if (x === 0) ctx.moveTo(cx + pad + 8 + x, y);
+            else ctx.lineTo(cx + pad + 8 + x, y);
+          }
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(232, 228, 217, 0.45)';
+          ctx.font = `${fontSize * 0.6}px monospace`;
+          ctx.fillText('FREQ: 15.734 kHz', cx + pad + 8, cy + rowH - pad - 10);
+        } else {
+          // Bottom Screens: Scrolling ticker telemetry
+          const barY = cy + rowH * 0.52;
+          ctx.fillStyle = `hsla(${((t * 30 + idx * 50) % 360)}, 65%, 50%, 0.7)`;
+          ctx.fillRect(cx + pad + 8, barY, innerW - 16, fontSize * 0.35);
+
+          ctx.fillStyle = '#e8e4d9';
+          ctx.font = `${fontSize * 0.62}px monospace`;
+          const msg = ' HUMAN ANTENNA · SIGNAL TUNER · V-FEED [06] ·';
+          const scroll = ((t * 40 + idx * 60) % (ctx.measureText(msg).width + innerW)) - (innerW * 0.5);
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(cx + pad + 8, cy + pad, innerW - 16, innerH);
+          ctx.clip();
+          ctx.fillText(msg + msg, cx + pad + 8 - scroll, cy + rowH - pad - 12);
+          ctx.restore();
+        }
+      }
+    }
   }
 
   dispose(): void {

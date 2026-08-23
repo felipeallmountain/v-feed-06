@@ -41,6 +41,20 @@ export class DebugView {
       this.ctx.restore();
     }
 
+    // Draw 2x3 CRT Matrix overlay guide lines
+    if (useAppStore.getState().shaders.matrixSplit) {
+      this.ctx.strokeStyle = 'rgba(240, 165, 0, 0.4)';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(width * 0.5, 0);
+      this.ctx.lineTo(width * 0.5, height);
+      this.ctx.moveTo(0, height * (1 / 3));
+      this.ctx.lineTo(width, height * (1 / 3));
+      this.ctx.moveTo(0, height * (2 / 3));
+      this.ctx.lineTo(width, height * (2 / 3));
+      this.ctx.stroke();
+    }
+
     if (frame?.landmarks) {
       this.ctx.fillStyle = '#3ddc97';
       for (const p of frame.landmarks) {
@@ -50,14 +64,20 @@ export class DebugView {
       }
     }
 
-    const fps = useAppStore.getState().fps;
+    const state = useAppStore.getState();
+    const fps = state.fps;
     this.ctx.fillStyle = '#e8e4d9';
-    this.ctx.font = '12px monospace';
+    this.ctx.font = '11px monospace';
     this.ctx.fillText(`${fps} FPS`, 8, 16);
     this.ctx.fillText(
-      useAppStore.getState().tracking.present ? 'PRESENT' : 'IDLE',
+      state.tracking.present ? 'PRESENT' : 'IDLE',
       8,
-      32,
+      30,
+    );
+    this.ctx.fillText(
+      `DIST: ${state.tracking.distance.toFixed(2)}m`,
+      8,
+      44,
     );
   }
 }
