@@ -23,6 +23,10 @@ interface SavedCalibration {
     distanceOffset?: number;
     minDistance?: number;
     maxDistance?: number;
+    antennaLocalWeight?: number;
+    antennaHandBoost?: number;
+    antennaSmoothing?: number;
+    antennaFalloffRadius?: number;
   };
   videoMode: VideoMode;
   skeleton?: {
@@ -715,6 +719,55 @@ export class CalibrationHUD {
         this.persist();
       });
 
+    const antennaFolder = gui.addFolder('Human Antenna & Presence (6 Pieces)');
+    antennaFolder
+      .add(store.tracking, 'antennaLocalWeight', 0.0, 1.0, 0.05)
+      .name('Local vs Global Weight')
+      .onChange((v: number) => {
+        store.patchTracking({ antennaLocalWeight: v });
+        this.persist();
+      });
+
+    antennaFolder
+      .add(store.tracking, 'antennaHandBoost', 0.5, 3.0, 0.1)
+      .name('Hand Antenna Boost')
+      .onChange((v: number) => {
+        store.patchTracking({ antennaHandBoost: v });
+        this.persist();
+      });
+
+    antennaFolder
+      .add(store.tracking, 'antennaFalloffRadius', 0.2, 1.0, 0.05)
+      .name('Antenna Field Radius')
+      .onChange((v: number) => {
+        store.patchTracking({ antennaFalloffRadius: v });
+        this.persist();
+      });
+
+    antennaFolder
+      .add(store.tracking, 'antennaSmoothing', 0.02, 0.5, 0.01)
+      .name('Response Smoothing')
+      .onChange((v: number) => {
+        store.patchTracking({ antennaSmoothing: v });
+        this.persist();
+      });
+
+    const screenReadouts = Array.from({ length: 6 }, () => ({
+      status: '0% lock · 100% snow',
+    }));
+
+    const scrNames = [
+      'CRT [01] Top-L',
+      'CRT [02] Top-R',
+      'CRT [03] Mid-L',
+      'CRT [04] Mid-R',
+      'CRT [05] Bot-L',
+      'CRT [06] Bot-R',
+    ];
+    const screenReadoutCtrls = screenReadouts.map((ro, i) =>
+      antennaFolder.add(ro, 'status').name(scrNames[i]).disable(),
+    );
+
     const video = gui.addFolder('Video & Ingestion');
 
     // Embedded live video canvas container for direct preview in lil-gui
@@ -950,6 +1003,17 @@ export class CalibrationHUD {
       }
       distReadout.liveDistance = `${state.tracking.distance.toFixed(2)} m`;
       distCtrl.updateDisplay();
+
+      for (let i = 0; i < 6; i++) {
+        const lockPct = Math.round(
+          (state.shaders.screenSignalLocks?.[i] ?? state.shaders.signalLock ?? 0) * 100,
+        );
+        const noisePct = Math.round(
+          (state.shaders.screenNoiseGains?.[i] ?? state.shaders.noiseGain ?? 1) * 100,
+        );
+        screenReadouts[i].status = `${lockPct}% lock · ${noisePct}% snow`;
+        screenReadoutCtrls[i]?.updateDisplay();
+      }
     });
 
     this.keyHandler = (e: KeyboardEvent) => {
@@ -1129,6 +1193,10 @@ export class CalibrationHUD {
         distanceOffset: state.tracking.distanceOffset,
         minDistance: state.tracking.minDistance,
         maxDistance: state.tracking.maxDistance,
+        antennaLocalWeight: state.tracking.antennaLocalWeight,
+        antennaHandBoost: state.tracking.antennaHandBoost,
+        antennaSmoothing: state.tracking.antennaSmoothing,
+        antennaFalloffRadius: state.tracking.antennaFalloffRadius,
       },
       videoMode: state.videoMode,
       skeleton: {

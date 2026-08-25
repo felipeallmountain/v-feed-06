@@ -9,21 +9,33 @@ export class GestureMapper {
   private prevWrist = { x: 0.5, y: 0.5 };
   private smoothedVelocity = 0;
   private smoothedDistance = 3;
+  private smoothedPresences: number[] = [0, 0, 0, 0, 0, 0];
+  private smoothedScreenLocks: number[] = [0, 0, 0, 0, 0, 0];
+  private smoothedScreenNoises: number[] = [1, 1, 1, 1, 1, 1];
 
   update(frame: TrackerFrame): void {
     const store = useAppStore.getState();
     const now = frame.timestampMs;
     const threshold = store.tracking.confidenceThreshold;
+    const smoothing = store.tracking.antennaSmoothing ?? 0.18;
 
     if (!frame.present || !frame.landmarks) {
       const since = now - (store.tracking.lastSeenMs || now);
       const idle = store.tracking.lastSeenMs > 0 && since > IDLE_TIMEOUT_MS;
 
       if (idle) {
-        // FR-03.1 Idle / Search Mode
+        // FR-03.1 Idle / Search Mode: Decay all screens to full static white noise
+        for (let i = 0; i < 6; i++) {
+          this.smoothedPresences[i] = lerp(this.smoothedPresences[i], 0, smoothing);
+          this.smoothedScreenLocks[i] = lerp(this.smoothedScreenLocks[i], 0, smoothing);
+          this.smoothedScreenNoises[i] = lerp(this.smoothedScreenNoises[i], 1, smoothing);
+        }
+
         store.patchShaders({
           noiseGain: 1,
           signalLock: 0,
+          screenNoiseGains: [...this.smoothedScreenNoises],
+          screenSignalLocks: [...this.smoothedScreenLocks],
           vHold: 0.85,
           hJitter: 0.4,
           rgbSplit: 0.2,
@@ -33,6 +45,7 @@ export class GestureMapper {
           present: false,
           distance: 3,
           velocity: 0,
+          screenPresences: [...this.smoothedPresences],
           leftHand: inactiveHand(),
           rightHand: inactiveHand(),
         });
@@ -85,33 +98,141 @@ export class GestureMapper {
       threshold,
     );
 
+    // Global Proximity Tuning based on calibrated min/max distance thresholds
+    const distRange = Math.max(maxD - minD, 0.1);
+    const globalProximity = THREE_CLAMP(1 - (this.smoothedDistance - minD) / distRange, 0, 1);
+
+    // --- PER-PIECE HUMAN ANTENNA COUPLING (6 CRT Screens by Landmark Dot Presence) ---
+    const handBoost = store.tracking.antennaHandBoost ?? 1.6;
+
+    // 6-Screen Bounding Boxes in top-down camera space [x in 0..1, y in 0..1]
+    const screenBoxes = [
+      { minX: 0.0, maxX: 0.5, minY: 0.0, maxY: 1 / 3 }, // CRT 01 [Top-L]
+      { minX: 0.5, maxX: 1.0, minY: 0.0, maxY: 1 / 3 }, // CRT 02 [Top-R]
+      { minX: 0.0, maxX: 0.5, minY: 1 / 3, maxY: 2 / 3 }, // CRT 03 [Mid-L]
+      { minX: 0.5, maxX: 1.0, minY: 1 / 3, maxY: 2 / 3 }, // CRT 04 [Mid-R]
+      { minX: 0.0, maxX: 0.5, minY: 2 / 3, maxY: 1.0 }, // CRT 05 [Bot-L]
+      { minX: 0.5, maxX: 1.0, minY: 2 / 3, maxY: 1.0 }, // CRT 06 [Bot-R]
+    ];
+
+    // Collect all active landmark dots with their coordinates and weights
+    const dots: Array<{ x: number; y: number; weight: number }> = [];
+
+    // 1. Hand landmark dots (21 dots per hand - high capacitive antenna conductor)
+    if (frame.leftHand && frame.leftHand.length > 0) {
+      for (const pt of frame.leftHand) {
+        if (pt) dots.push({ x: pt.x, y: pt.y, weight: 0.10 * handBoost });
+      }
+    } else if (leftHand.active) {
+      dots.push({ x: leftHand.x, y: leftHand.y, weight: 0.65 * handBoost });
+    }
+
+    if (frame.rightHand && frame.rightHand.length > 0) {
+      for (const pt of frame.rightHand) {
+        if (pt) dots.push({ x: pt.x, y: pt.y, weight: 0.10 * handBoost });
+      }
+    } else if (rightHand.active) {
+      dots.push({ x: rightHand.x, y: rightHand.y, weight: 0.65 * handBoost });
+    }
+
+    // 2. Pose landmark dots (33 body landmarks)
+    for (let idx = 0; idx < lm.length; idx++) {
+      const pt = lm[idx];
+      if (!pt || (pt.visibility ?? 1) < threshold) continue;
+
+      let w = 0.15;
+      if (idx <= 10) {
+        // Head / Face landmarks
+        w = 0.12;
+      } else if (idx === 11 || idx === 12 || idx === 23 || idx === 24) {
+        // Shoulders and Hips
+        w = 0.35;
+      } else if (idx === 13 || idx === 14 || idx === 15 || idx === 16) {
+        // Elbows and Wrists
+        w = 0.25;
+      } else {
+        // Legs / Feet
+        w = 0.18;
+      }
+      dots.push({ x: pt.x, y: pt.y, weight: w });
+    }
+
+    const nextPresences: number[] = [];
+    const nextLocks: number[] = [];
+    const nextNoises: number[] = [];
+
+    for (let i = 0; i < 6; i++) {
+      const box = screenBoxes[i];
+      let screenDotScore = 0;
+
+      for (const dot of dots) {
+        // Check if dot is inside this screen's bounding box
+        if (
+          dot.x >= box.minX &&
+          dot.x <= box.maxX &&
+          dot.y >= box.minY &&
+          dot.y <= box.maxY
+        ) {
+          screenDotScore += dot.weight;
+        } else {
+          // Soft boundary bleed (only within 0.08 margin of the screen edge)
+          const clampX = THREE_CLAMP(dot.x, box.minX, box.maxX);
+          const clampY = THREE_CLAMP(dot.y, box.minY, box.maxY);
+          const edgeDist = Math.hypot(dot.x - clampX, (dot.y - clampY) * 1.5);
+          if (edgeDist < 0.08) {
+            const bleed = Math.exp(-(edgeDist * edgeDist) / (2 * 0.035 * 0.035));
+            screenDotScore += dot.weight * bleed * 0.4;
+          }
+        }
+      }
+
+      // Compute presence on this screen from dots and local antenna weight
+      const localWeight = store.tracking.antennaLocalWeight ?? 0.95;
+      const rawPresence = THREE_CLAMP(
+        (1.0 - localWeight) * globalProximity + localWeight * screenDotScore,
+        0,
+        1,
+      );
+      const targetLock = rawPresence * rawPresence;
+      const targetNoise = THREE_CLAMP(1.0 - targetLock * 0.96, 0.04, 1.0);
+
+      this.smoothedPresences[i] = lerp(this.smoothedPresences[i], rawPresence, smoothing);
+      this.smoothedScreenLocks[i] = lerp(this.smoothedScreenLocks[i], targetLock, smoothing);
+      this.smoothedScreenNoises[i] = lerp(this.smoothedScreenNoises[i], targetNoise, smoothing);
+
+      nextPresences.push(this.smoothedPresences[i]);
+      nextLocks.push(this.smoothedScreenLocks[i]);
+      nextNoises.push(this.smoothedScreenNoises[i]);
+    }
+
+    // Average global lock for single-screen fallback and master audio resonance
+    const avgLock = nextLocks.reduce((a, b) => a + b, 0) / 6;
+    const avgNoise = nextNoises.reduce((a, b) => a + b, 0) / 6;
+
+    // FR-03.4 Velocity Fragmentation
+    const velNorm = THREE_CLAMP(this.smoothedVelocity / 1.2, 0, 1);
+    const rgbSplit = velNorm * 1.4;
+    const hJitter = velNorm * 0.9;
+    const vHold = (1 - avgLock) * 0.35;
+
+    // FR-03.3 Localized Hand Interference
+    const handActive = leftHand.active || rightHand.active;
+    const rippleStrength = handActive ? 0.35 + velNorm * 0.65 : 0;
+
     store.patchTracking({
       distance: this.smoothedDistance,
       velocity: this.smoothedVelocity,
       torsoArea,
       leftHand,
       rightHand,
+      screenPresences: nextPresences,
     });
 
-    // Proximity Tuning based on calibrated min/max distance thresholds
-    const distRange = Math.max(maxD - minD, 0.1);
-    const proximity = THREE_CLAMP(1 - (this.smoothedDistance - minD) / distRange, 0, 1);
-    const signalLock = proximity * proximity;
-    const noiseGain = THREE_CLAMP(1 - signalLock * 0.95, 0.02, 1);
-
-    // FR-03.4 Velocity Fragmentation
-    const velNorm = THREE_CLAMP(this.smoothedVelocity / 1.2, 0, 1);
-    const rgbSplit = velNorm * 1.4;
-    const hJitter = velNorm * 0.9;
-    const vHold = (1 - signalLock) * 0.35;
-
-    // FR-03.3 Localized Hand Interference
-    const handActive = leftHand.active || rightHand.active;
-    const rippleStrength = handActive ? 0.35 + velNorm * 0.65 : 0;
-
     store.patchShaders({
-      signalLock,
-      noiseGain,
+      signalLock: avgLock,
+      noiseGain: avgNoise,
+      screenSignalLocks: nextLocks,
+      screenNoiseGains: nextNoises,
       rgbSplit,
       hJitter,
       vHold,

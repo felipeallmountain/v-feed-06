@@ -36,6 +36,8 @@ uniform float uVHold;
 uniform float uHJitter;
 uniform float uNoiseGain;
 uniform float uSignalLock;
+uniform float uScreenNoiseGain[6];
+uniform float uScreenSignalLock[6];
 uniform float uRippleStrength;
 uniform vec2 uRippleCenter;
 uniform float uGridMode;
@@ -149,12 +151,25 @@ void main() {
       color = texture2D(tDiffuse, sampleUv).rgb;
     }
 
+    // Determine screen index in single screen mode based on UV
+    int sCol = uv.x < 0.5 ? 0 : 1;
+    int sRow = uv.y < (1.0 / 3.0) ? 0 : (uv.y < (2.0 / 3.0) ? 1 : 2);
+    int sIdx = (2 - sRow) * 2 + sCol; // 0=Top-L, 1=Top-R, 2=Mid-L, 3=Mid-R, 4=Bot-L, 5=Bot-R
+    float localNoise = uNoiseGain;
+    float localLock = uSignalLock;
+    for (int s = 0; s < 6; s++) {
+      if (s == sIdx) {
+        localNoise = uScreenNoiseGain[s];
+        localLock = uScreenSignalLock[s];
+      }
+    }
+
     color *= scanlines(uv, uScanline, uTime, uResolution);
     color = phosphor(color, uv, uPhosphor, uResolution);
     color *= vignette(uv, uVignette);
-    color = mixSnow(color, uv, uNoiseGain, uSignalLock, uTime, uResolution);
+    color = mixSnow(color, uv, localNoise, localLock, uTime, uResolution);
 
-    color += color * color * 0.08 * uSignalLock;
+    color += color * color * 0.08 * localLock;
 
     gl_FragColor = vec4(color, 1.0);
     return;
@@ -201,13 +216,17 @@ void main() {
   float row = 2.0 - float(matchedScreen / 2); // 2 (Top), 1 (Mid), 0 (Bot)
   float screenIndex = float(matchedScreen);
 
-  // Apply Per-Piece and Global Rotation & Flips
+  // Apply Per-Piece and Global Rotation, Flips, and Antenna RF Parameters
   vec2 flip = vec2(0.0);
   float screenRot = 0.0;
+  float screenNoiseGain = uNoiseGain;
+  float screenSignalLock = uSignalLock;
   for (int s = 0; s < 6; s++) {
     if (s == matchedScreen) {
       flip = uScreenFlips[s];
       screenRot = uScreenRotations[s];
+      screenNoiseGain = uScreenNoiseGain[s];
+      screenSignalLock = uScreenSignalLock[s];
     }
   }
 
@@ -261,11 +280,11 @@ void main() {
     }
   }
 
-  // Per-screen analog sync & timing variance
+  // Per-screen analog sync & timing variance modulated by piece antenna lock
   float screenSeed = screenIndex + 1.0;
   float screenRand = fract(sin(screenSeed * 78.233) * 43758.5453);
   float screenTimeOffset = screenRand * 8.0 * uPerScreenVariance;
-  float screenVHold = uVHold * (1.0 + (screenRand - 0.5) * 0.3 * uPerScreenVariance);
+  float screenVHold = uVHold * (1.0 + (screenRand - 0.5) * 0.3 * uPerScreenVariance) * (1.0 - screenSignalLock * 0.75);
   float screenHJitter = uHJitter * (1.0 + (screenRand - 0.5) * 0.4 * uPerScreenVariance);
 
   vec2 sampleUv = vec2(
@@ -308,9 +327,9 @@ void main() {
     color += vec3(spec);
   }
 
-  // RF noise
-  color = mixSnow(color, sampleUv, uNoiseGain, uSignalLock, uTime + screenTimeOffset, uResolution);
-  color += color * color * 0.08 * uSignalLock;
+  // Per-piece RF noise
+  color = mixSnow(color, sampleUv, screenNoiseGain, screenSignalLock, uTime + screenTimeOffset, uResolution);
+  color += color * color * 0.08 * screenSignalLock;
 
   // Corner handle target markers when calibration mode is active
   if (uShowCornerHandles > 0.5) {

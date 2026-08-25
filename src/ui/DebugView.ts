@@ -100,6 +100,20 @@ export class DebugView {
       this.ctx.restore();
     }
 
+    // Draw 2x3 matrix antenna quadrant guides in camera view
+    if (useAppStore.getState().shaders.matrixSplit) {
+      this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.25)';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(x + w * 0.5, y);
+      this.ctx.lineTo(x + w * 0.5, y + h);
+      this.ctx.moveTo(x, y + h * (1 / 3));
+      this.ctx.lineTo(x + w, y + h * (1 / 3));
+      this.ctx.moveTo(x, y + h * (2 / 3));
+      this.ctx.lineTo(x + w, y + h * (2 / 3));
+      this.ctx.stroke();
+    }
+
     if (frame?.landmarks) {
       this.ctx.fillStyle = '#3ddc97';
       for (const p of frame.landmarks) {
@@ -158,19 +172,47 @@ export class DebugView {
         this.ctx.lineTo(drawX + drawW, drawY + drawH * (2 / 3));
         this.ctx.stroke();
 
-        // 6-screen quadrant labels
-        this.ctx.fillStyle = 'rgba(240, 165, 0, 0.7)';
+        // 6-screen quadrant labels with antenna signal lock meters
         this.ctx.font = '8px monospace';
         const qW = drawW / 2;
         const qH = drawH / 3;
+        const sh = useAppStore.getState().shaders;
+
         for (let r = 0; r < 3; r++) {
           for (let c = 0; c < 2; c++) {
-            const idx = r * 2 + c + 1;
-            this.ctx.fillText(
-              `CRT [0${idx}]`,
-              drawX + c * qW + 4,
-              drawY + r * qH + 11,
+            const screenIdx = r * 2 + c;
+            const idx = screenIdx + 1;
+            const lockPct = Math.round(
+              (sh.screenSignalLocks?.[screenIdx] ?? sh.signalLock ?? 0) * 100,
             );
+            const noisePct = Math.round(
+              (sh.screenNoiseGains?.[screenIdx] ?? sh.noiseGain ?? 1) * 100,
+            );
+
+            const qX = drawX + c * qW;
+            const qY = drawY + r * qH;
+
+            // Quadrant name
+            this.ctx.fillStyle = 'rgba(240, 165, 0, 0.85)';
+            this.ctx.fillText(`CRT [0${idx}]`, qX + 4, qY + 10);
+
+            // Antenna Lock % badge with color coding
+            const lockColor =
+              lockPct > 70 ? '#3ddc97' : lockPct > 30 ? '#ffb703' : '#ff3366';
+            this.ctx.fillStyle = lockColor;
+            this.ctx.fillText(
+              `ANT:${lockPct}% N:${noisePct}%`,
+              qX + 4,
+              qY + 20,
+            );
+
+            // Mini antenna reception signal bar
+            const barW = Math.max(20, qW - 12);
+            const barH = 2;
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(qX + 4, qY + 23, barW, barH);
+            this.ctx.fillStyle = lockColor;
+            this.ctx.fillRect(qX + 4, qY + 23, (barW * lockPct) / 100, barH);
           }
         }
       }

@@ -42,6 +42,8 @@ export interface ShaderUniformsState {
   hJitter: number;
   noiseGain: number;
   signalLock: number;
+  screenNoiseGains: number[];
+  screenSignalLocks: number[];
   rippleStrength: number;
   time: number;
 }
@@ -60,6 +62,11 @@ export interface TrackingState {
   distanceOffset: number;
   minDistance: number;
   maxDistance: number;
+  screenPresences: number[];
+  antennaLocalWeight: number;
+  antennaHandBoost: number;
+  antennaSmoothing: number;
+  antennaFalloffRadius: number;
 }
 
 export type SkeletonStyle = 'phosphor' | 'cyan' | 'amber' | 'magenta';
@@ -213,6 +220,8 @@ export const CRT_6X_TOTEM_PRESET: ShaderUniformsState = {
   hJitter: 0,
   noiseGain: 1,
   signalLock: 0,
+  screenNoiseGains: [1, 1, 1, 1, 1, 1],
+  screenSignalLocks: [0, 0, 0, 0, 0, 0],
   rippleStrength: 0,
   time: 0,
 };
@@ -244,6 +253,8 @@ export const CRT_6X_PHYSICAL_PRESET: ShaderUniformsState = {
   hJitter: 0,
   noiseGain: 1,
   signalLock: 0,
+  screenNoiseGains: [1, 1, 1, 1, 1, 1],
+  screenSignalLocks: [0, 0, 0, 0, 0, 0],
   rippleStrength: 0,
   time: 0,
 };
@@ -275,6 +286,8 @@ export const FLAT_DISPLAY_SHADERS: ShaderUniformsState = {
   hJitter: 0,
   noiseGain: 1,
   signalLock: 0,
+  screenNoiseGains: [1, 1, 1, 1, 1, 1],
+  screenSignalLocks: [0, 0, 0, 0, 0, 0],
   rippleStrength: 0,
   time: 0,
 };
@@ -306,6 +319,8 @@ export const CRT_TUBE_SHADERS: ShaderUniformsState = {
   hJitter: 0,
   noiseGain: 1,
   signalLock: 0,
+  screenNoiseGains: [1, 1, 1, 1, 1, 1],
+  screenSignalLocks: [0, 0, 0, 0, 0, 0],
   rippleStrength: 0,
   time: 0,
 };
@@ -369,6 +384,11 @@ export const useAppStore = createStore<AppState>((set) => ({
     distanceOffset: 2.8,
     minDistance: 1.0,
     maxDistance: 3.0,
+    screenPresences: [0, 0, 0, 0, 0, 0],
+    antennaLocalWeight: 0.95,
+    antennaHandBoost: 1.6,
+    antennaSmoothing: 0.22,
+    antennaFalloffRadius: 0.45,
   },
   shaders: { ...CRT_6X_TOTEM_PRESET },
   setFps: (fps) => set({ fps }),

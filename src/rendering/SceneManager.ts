@@ -89,6 +89,12 @@ export class SceneManager {
         uHJitter: { value: 0 },
         uNoiseGain: { value: 1 },
         uSignalLock: { value: 0 },
+        uScreenNoiseGain: {
+          value: new Float32Array([1, 1, 1, 1, 1, 1]),
+        },
+        uScreenSignalLock: {
+          value: new Float32Array(6),
+        },
         uRippleStrength: { value: 0 },
         uRippleCenter: { value: new THREE.Vector2(0.5, 0.5) },
         uGridMode: { value: 0 },
@@ -216,6 +222,14 @@ export class SceneManager {
     this.material.uniforms.uHJitter.value = sh.hJitter;
     this.material.uniforms.uNoiseGain.value = sh.noiseGain;
     this.material.uniforms.uSignalLock.value = sh.signalLock;
+
+    const screenNoiseUniform = this.material.uniforms.uScreenNoiseGain.value as Float32Array;
+    const screenLockUniform = this.material.uniforms.uScreenSignalLock.value as Float32Array;
+    for (let i = 0; i < 6; i++) {
+      screenNoiseUniform[i] = sh.screenNoiseGains?.[i] ?? sh.noiseGain;
+      screenLockUniform[i] = sh.screenSignalLocks?.[i] ?? sh.signalLock;
+    }
+
     this.material.uniforms.uRippleStrength.value = sh.rippleStrength;
     this.material.uniforms.uRippleCenter.value.set(center.x, center.y);
     this.material.uniforms.uGridMode.value = gridMode ? 1 : 0;
