@@ -1,90 +1,173 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { VideoIngestService, type IngestedVideo } from '../services/VideoIngestService.js';
 
-const VIDEO_EXT = new Set(['.mp4', '.webm', '.mov', '.mkv']);
-
-export function createPlaylistRouter(fallbackDir: string): Router {
+export function createPlaylistRouter(
+  fallbackDir: string,
+  ingestService: VideoIngestService,
+): Router {
   const router = Router();
 
   router.get('/health', (_req, res) => {
     res.json({ ok: true, service: 'v-feed-06' });
   });
 
-  router.get('/playlist', async (_req, res) => {
-    const cached = listCachedVideos(fallbackDir);
-    let live: Array<{ id: string; title: string; url: string }> = [];
+  /**
+   * Returns current live and cached playlists with rich metadata.
+   */
+  router.get('/playlist', (_req, res) => {
+    const readyVideos = ingestService.getReadyVideos();
+    const liveItems = readyVideos
+      .filter((v) => v.source === 'youtube')
+      .map(formatPlayableItem);
 
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    const playlistId = process.env.YOUTUBE_PLAYLIST_ID;
+    const cacheItems = readyVideos
+      .filter((v) => v.source === 'local')
+      .map(formatPlayableItem);
 
-    if (apiKey && playlistId) {
-      try {
-        live = await fetchYouTubePlaylist(apiKey, playlistId);
-      } catch (err) {
-        console.warn('[v-feed] YouTube playlist fetch failed:', err);
-      }
-    }
+    // If no local-only files exist, allow live items as cache fallback
+    const effectiveCache = cacheItems.length > 0 ? cacheItems : liveItems;
 
     res.json({
-      mode: live.length > 0 ? 'live' : 'cache',
-      live,
-      cache: cached,
-      fallbackReady: cached.length > 0,
+      mode: liveItems.length > 0 ? 'live' : 'cache',
+      live: liveItems,
+      cache: effectiveCache,
+      fallbackReady: readyVideos.length > 0,
+      ingestion: ingestService.getStatus(),
     });
   });
 
+  /**
+   * Returns legacy list of cached videos.
+   */
   router.get('/cache', (_req, res) => {
-    res.json({ videos: listCachedVideos(fallbackDir) });
+    const readyVideos = ingestService.getReadyVideos();
+    res.json({ videos: readyVideos.map(formatPlayableItem) });
+  });
+
+  /**
+   * Returns live ingestion status, active download progress, and queue length.
+   */
+  router.get('/ingest/status', (_req, res) => {
+    res.json(ingestService.getStatus());
+  });
+
+  /**
+   * Triggers YouTube playlist or search synchronization and begins background downloading.
+   */
+  router.post('/ingest/sync', async (req, res) => {
+    try {
+      const { playlistId, searchTopic, maxVideos } = req.body || {};
+      const result = await ingestService.sync({
+        playlistId: playlistId ? String(playlistId) : undefined,
+        searchTopic: searchTopic ? String(searchTopic) : undefined,
+        maxVideos: maxVideos ? Number(maxVideos) : undefined,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[v-feed] Ingest sync failed:', msg);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Ingest a single video URL or video ID directly.
+   */
+  router.post('/ingest/video', async (req, res) => {
+    const { urlOrId } = req.body || {};
+    if (!urlOrId || typeof urlOrId !== 'string') {
+      res.status(400).json({ ok: false, error: 'Missing urlOrId parameter' });
+      return;
+    }
+
+    try {
+      const video = await ingestService.ingestSingleVideo(urlOrId);
+      res.json({ ok: true, video: formatPlayableItem(video) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[v-feed] Single video ingest failed:', msg);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Delete a video from disk and manifest.
+   */
+  router.delete('/videos/:id', (req, res) => {
+    const id = req.params.id;
+    const deleted = ingestService.deleteVideo(id);
+    res.json({ ok: deleted, id });
+  });
+
+  /**
+   * Stream video with full HTTP 206 Range headers support.
+   */
+  router.get('/videos/:id/stream', (req, res) => {
+    const id = req.params.id;
+    const readyVideos = ingestService.getReadyVideos();
+    const video = readyVideos.find(
+      (v) => v.id === id || v.filename === id || v.filename === `yt_${id}.mp4`,
+    );
+
+    if (!video) {
+      res.status(404).send('Video not found');
+      return;
+    }
+
+    const filePath = video.filePath || path.join(fallbackDir, video.filename);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).send('Video file not found on disk');
+      return;
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = end - start + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
   });
 
   return router;
 }
 
-function listCachedVideos(dir: string): Array<{ id: string; title: string; url: string }> {
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => VIDEO_EXT.has(path.extname(f).toLowerCase()))
-    .sort()
-    .map((file) => ({
-      id: file,
-      title: path.parse(file).name,
-      url: `/fallback-videos/${encodeURIComponent(file)}`,
-    }));
-}
-
-async function fetchYouTubePlaylist(
-  apiKey: string,
-  playlistId: string,
-): Promise<Array<{ id: string; title: string; url: string }>> {
-  const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
-  url.searchParams.set('part', 'snippet,contentDetails');
-  url.searchParams.set('maxResults', '25');
-  url.searchParams.set('playlistId', playlistId);
-  url.searchParams.set('key', apiKey);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`YouTube API ${response.status}`);
-  }
-
-  const data = (await response.json()) as {
-    items?: Array<{
-      contentDetails?: { videoId?: string };
-      snippet?: { title?: string };
-    }>;
+function formatPlayableItem(video: IngestedVideo) {
+  return {
+    id: video.id,
+    title: video.title,
+    channelTitle: video.channelTitle,
+    durationSec: video.durationSec,
+    durationFormatted: video.durationFormatted,
+    thumbnail: video.thumbnail,
+    filename: video.filename,
+    fileSize: video.fileSize,
+    downloadedAt: video.downloadedAt,
+    source: video.source,
+    url: `/fallback-videos/${encodeURIComponent(video.filename)}`,
+    streamUrl: `/api/videos/${encodeURIComponent(video.id)}/stream`,
   };
-
-  return (data.items ?? [])
-    .map((item) => {
-      const id = item.contentDetails?.videoId;
-      if (!id) return null;
-      return {
-        id,
-        title: item.snippet?.title ?? id,
-        url: `https://www.youtube.com/watch?v=${id}`,
-      };
-    })
-    .filter((v): v is { id: string; title: string; url: string } => v !== null);
 }

@@ -22,9 +22,16 @@ Add vertical MP4 files to `public/fallback-videos/` for exhibition playback. Wit
 npm run generate:sample
 ```
 
-Optional `.env`:
+## YouTube API & Automated Video Ingestion
 
-- `YOUTUBE_API_KEY` / `YOUTUBE_PLAYLIST_ID` — metadata listing only; on-site playback should use the local cache (or a future yt-dlp ingest job).
+V-FEED [06] connects to the **YouTube Data API v3** to search for vertical Shorts or ingest curated playlists, downloading and optimizing them into faststart MP4 video files via `yt-dlp` in `public/fallback-videos/` with a persistent metadata manifest.
+
+In `.env`:
+- `YOUTUBE_API_KEY`: Google Cloud API Key with YouTube Data API v3 enabled.
+- `YOUTUBE_PLAYLIST_ID`: (Optional) Curated playlist ID to ingest.
+- `YOUTUBE_SEARCH_QUERY`: (Optional) Search query for automated discovery (default: `vertical synthwave retro shorts #shorts`).
+- `YOUTUBE_MAX_VIDEOS`: Max videos to ingest per sync (default: `10`).
+- `YOUTUBE_AUTO_SYNC`: Automatically sync and download on server boot (default: `true`).
 
 ## Develop
 

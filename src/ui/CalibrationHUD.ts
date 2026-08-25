@@ -5,6 +5,8 @@ import {
   CRT_TUBE_SHADERS,
   FLAT_DISPLAY_SHADERS,
   useAppStore,
+  type AudioState,
+  type FrameState,
   type ShaderUniformsState,
   type VideoMode,
 } from '../core/StateManager';
@@ -35,18 +37,27 @@ interface SavedCalibration {
     showDots?: boolean;
     jitter?: number;
   };
+  frames?: Partial<FrameState>;
+  audio?: Partial<AudioState>;
 }
 
 export class CalibrationHUD {
   private gui: GUI | null = null;
   private videoQueue: VideoQueue | null = null;
+  private feedVideo: HTMLVideoElement | null = null;
+  private videoCanvas: HTMLCanvasElement | null = null;
+  private videoCtx: CanvasRenderingContext2D | null = null;
+  private nowPlayingController: { title: string } | null = null;
+  private timeController: { time: string } | null = null;
+  private scrubController: { progress: number } | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private fpsController: { fps: string } | null = null;
   private curvatureCtrl: ReturnType<GUI['add']> | null = null;
   private shaderBindings: ShaderUniformsState | null = null;
 
-  attach(videoQueue: VideoQueue): void {
+  attach(videoQueue: VideoQueue, feedVideo?: HTMLVideoElement): void {
     this.videoQueue = videoQueue;
+    if (feedVideo) this.feedVideo = feedVideo;
   }
 
   init(): void {
@@ -132,6 +143,149 @@ export class CalibrationHUD {
         store.patchShaders({ perScreenVariance: v });
         this.persist();
       });
+
+    const framesFolder = gui.addFolder('Screen Frames & TV Outlines');
+    const frm = { ...store.frames };
+
+    framesFolder
+      .add(frm, 'show')
+      .name('Show Screen Frames')
+      .onChange((v: boolean) => {
+        store.setFrames({ show: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'shapeStyle', [
+        'crt-tube',
+        'bracket-corners',
+        'rounded-rect',
+        'industrial-bezel',
+        'minimal-ticks',
+      ])
+      .name('Frame Shape')
+      .onChange((v: any) => {
+        store.setFrames({ shapeStyle: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'followTubeCurvature')
+      .name('Follow TV Curvature')
+      .onChange((v: boolean) => {
+        store.setFrames({ followTubeCurvature: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'curvatureScale', 0.0, 2.5, 0.05)
+      .name('Curvature Scale')
+      .onChange((v: number) => {
+        store.setFrames({ curvatureScale: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'cornerRadius', 0.0, 0.3, 0.01)
+      .name('Corner Rounding')
+      .onChange((v: number) => {
+        store.setFrames({ cornerRadius: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'inset', 0.0, 0.12, 0.005)
+      .name('Frame Inset (Padding)')
+      .onChange((v: number) => {
+        store.setFrames({ inset: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'thickness', 0.5, 8.0, 0.5)
+      .name('Line Thickness')
+      .onChange((v: number) => {
+        store.setFrames({ thickness: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'opacity', 0.0, 1.0, 0.05)
+      .name('Frame Opacity')
+      .onChange((v: number) => {
+        store.setFrames({ opacity: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'showLabels')
+      .name('Show Text Badges')
+      .onChange((v: boolean) => {
+        store.setFrames({ showLabels: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'showCrosshairs')
+      .name('Center Crosshairs')
+      .onChange((v: boolean) => {
+        store.setFrames({ showCrosshairs: v });
+        this.persist();
+      });
+
+    framesFolder
+      .add(frm, 'showCornerBrackets')
+      .name('Corner Bracket Accents')
+      .onChange((v: boolean) => {
+        store.setFrames({ showCornerBrackets: v });
+        this.persist();
+      });
+
+    // Subfolder for per-screen custom text editing
+    const textFolder = framesFolder.addFolder('Screen Text Labels (1-6)');
+    textFolder.close();
+
+    const labelBindings = Array.from({ length: 6 }, (_, i) => ({
+      title: store.frames.customLabels[i] || `CRT [0${i + 1}]`,
+      subtitle: store.frames.customSubtitles[i] || '',
+    }));
+
+    for (let i = 0; i < 6; i++) {
+      const scrNames = ['Top-Left', 'Top-Right', 'Mid-Left', 'Mid-Right', 'Bot-Left', 'Bot-Right'];
+      const scrFolder = textFolder.addFolder(`Screen ${i + 1} (${scrNames[i]})`);
+      scrFolder.close();
+      scrFolder
+        .add(labelBindings[i], 'title')
+        .name('Title')
+        .onChange((v: string) => {
+          store.setScreenCustomLabel(i, v);
+          this.persist();
+        });
+      scrFolder
+        .add(labelBindings[i], 'subtitle')
+        .name('Subtitle')
+        .onChange((v: string) => {
+          store.setScreenCustomLabel(i, labelBindings[i].title, v);
+          this.persist();
+        });
+    }
+
+    textFolder
+      .add(
+        {
+          resetLabels: () => {
+            store.resetScreenLabels();
+            for (let i = 0; i < 6; i++) {
+              labelBindings[i].title = store.frames.customLabels[i];
+              labelBindings[i].subtitle = store.frames.customSubtitles[i];
+            }
+            textFolder.controllersRecursive().forEach((c) => c.updateDisplay());
+            this.persist();
+          },
+        },
+        'resetLabels',
+      )
+      .name('Reset Default Labels');
 
     const cornerFolder = gui.addFolder('Corner Pinning / Keystone (6 Screens)');
     const cornerState = {
@@ -561,14 +715,129 @@ export class CalibrationHUD {
         this.persist();
       });
 
-    const video = gui.addFolder('Video source');
-    const videoState = { mode: store.videoMode as VideoMode };
+    const video = gui.addFolder('Video & Ingestion');
+
+    // Embedded live video canvas container for direct preview in lil-gui
+    const previewWrap = document.createElement('div');
+    previewWrap.style.margin = '6px 8px 8px 8px';
+    previewWrap.style.background = '#0a0c10';
+    previewWrap.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+    previewWrap.style.borderRadius = '4px';
+    previewWrap.style.padding = '6px';
+    previewWrap.style.display = 'flex';
+    previewWrap.style.flexDirection = 'column';
+    previewWrap.style.alignItems = 'center';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 284;
+    canvas.style.width = '140px';
+    canvas.style.height = '248px';
+    canvas.style.display = 'block';
+    canvas.style.borderRadius = '2px';
+    canvas.style.background = '#000';
+    canvas.style.boxShadow = '0 2px 8px rgba(0,0,0,0.5)';
+    previewWrap.appendChild(canvas);
+    this.videoCanvas = canvas;
+    this.videoCtx = canvas.getContext('2d');
+    video.$children.appendChild(previewWrap);
+
+    this.nowPlayingController = { title: 'Loading feed...' };
+    video.add(this.nowPlayingController, 'title').name('Now Playing').disable();
+
+    this.timeController = { time: '0:00 / 0:00 (1080×1920)' };
+    video.add(this.timeController, 'time').name('Time / Res').disable();
+
+    this.scrubController = { progress: 0 };
+    const scrubCtrl = video.add(this.scrubController, 'progress', 0, 100, 0.5).name('Seek (%)');
+    scrubCtrl.onFinishChange((v: number) => {
+      if (this.feedVideo && this.feedVideo.duration) {
+        this.feedVideo.currentTime = (v / 100) * this.feedVideo.duration;
+      }
+    });
+
+    const videoState = {
+      mode: store.videoMode as VideoMode,
+      next: () => {
+        void this.videoQueue?.next();
+      },
+      prev: () => {
+        void this.videoQueue?.prev();
+      },
+      togglePlay: () => {
+        if (!this.feedVideo) return;
+        if (this.feedVideo.paused) {
+          void this.feedVideo.play();
+        } else {
+          this.feedVideo.pause();
+        }
+      },
+      unmuteAudio: store.debugVideoAudio,
+      syncYouTube: () => {
+        void this.videoQueue?.syncYouTube();
+      },
+    };
     video
-      .add(videoState, 'mode', ['cache', 'live', 'grid'] as VideoMode[])
-      .name('Source')
+      .add(videoState, 'mode', ['live', 'cache', 'grid'] as VideoMode[])
+      .name('Playback Mode')
       .onChange((mode: VideoMode) => {
         this.videoQueue?.setMode(mode);
         localStorage.setItem('vfeed-video-mode', mode);
+        this.persist();
+      });
+    video.add(videoState, 'togglePlay').name('⏯ Play / Pause');
+    video.add(videoState, 'next').name('⏭ Next Video');
+    video.add(videoState, 'prev').name('⏮ Prev Video');
+    video.add(videoState, 'syncYouTube').name('↓ Sync YouTube Now');
+
+    const audioFolder = gui.addFolder('Audio & Antenna Sound');
+    const aud = { ...store.audio };
+
+    audioFolder
+      .add(aud, 'masterVolume', 0, 1, 0.05)
+      .name('Master Volume')
+      .onChange((v: number) => {
+        store.setAudioState({ masterVolume: v });
+        this.persist();
+      });
+
+    audioFolder
+      .add(aud, 'videoVolume', 0, 1, 0.05)
+      .name('Video Sound Volume')
+      .onChange((v: number) => {
+        store.setAudioState({ videoVolume: v });
+        this.persist();
+      });
+
+    audioFolder
+      .add(aud, 'antennaModulation')
+      .name('Human Antenna Tuning')
+      .onChange((v: boolean) => {
+        store.setAudioState({ antennaModulation: v });
+        this.persist();
+      });
+
+    audioFolder
+      .add(aud, 'noiseVolume', 0, 1, 0.05)
+      .name('RF Static Noise')
+      .onChange((v: number) => {
+        store.setAudioState({ noiseVolume: v });
+        this.persist();
+      });
+
+    audioFolder
+      .add(aud, 'humVolume', 0, 0.1, 0.005)
+      .name('CRT Flyback Hum')
+      .onChange((v: number) => {
+        store.setAudioState({ humVolume: v });
+        this.persist();
+      });
+
+    audioFolder
+      .add(aud, 'muted')
+      .name('Mute Audio')
+      .onChange((v: boolean) => {
+        store.setAudioState({ muted: v });
         this.persist();
       });
 
@@ -660,11 +929,20 @@ export class CalibrationHUD {
     const debug = gui.addFolder('Debug');
     this.fpsController = { fps: `${store.fps} FPS` };
     debug.add(this.fpsController, 'fps').name('Frame rate').disable();
-    const dbg = { debugOverlay: store.debugOverlay };
-    debug.add(dbg, 'debugOverlay').name('Debug camera window').onChange((v: boolean) => {
+    const dbg = {
+      debugOverlay: store.debugOverlay,
+      debugViewMode: store.debugViewMode || 'video',
+    };
+    debug.add(dbg, 'debugOverlay').name('Debug Overlay Window').onChange((v: boolean) => {
       useAppStore.getState().setDebugOverlay(v);
       this.persist();
     });
+    debug
+      .add(dbg, 'debugViewMode', ['video', 'camera', 'split'])
+      .name('Debug Window Feed')
+      .onChange((m: any) => {
+        useAppStore.getState().setDebugViewMode(m);
+      });
 
     useAppStore.subscribe((state) => {
       if (this.fpsController) {
@@ -826,6 +1104,12 @@ export class CalibrationHUD {
           store.setSkeletonJitter(saved.skeleton.jitter);
         }
       }
+      if (saved.frames) {
+        store.setFrames(saved.frames);
+      }
+      if (saved.audio) {
+        store.setAudioState(saved.audio);
+      }
     } catch {
       /* ignore corrupt saves */
     }
@@ -859,6 +1143,8 @@ export class CalibrationHUD {
         showDots: state.skeletonShowDots,
         jitter: state.skeletonJitter,
       },
+      frames: state.frames,
+      audio: state.audio,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   }
@@ -884,9 +1170,74 @@ export class CalibrationHUD {
     }
   }
 
+  update(feedVideo?: HTMLVideoElement): void {
+    if (feedVideo) this.feedVideo = feedVideo;
+    const isVisible = useAppStore.getState().hudVisible;
+    if (!isVisible || !this.gui) return;
+
+    // Draw live YouTube Short frame onto the embedded lil-gui preview canvas
+    if (this.videoCanvas && this.videoCtx && this.feedVideo && this.feedVideo.readyState >= 2) {
+      const { width, height } = this.videoCanvas;
+      this.videoCtx.clearRect(0, 0, width, height);
+
+      const vw = this.feedVideo.videoWidth || 1080;
+      const vh = this.feedVideo.videoHeight || 1920;
+      const aspect = vw / vh;
+      const slotAspect = width / height;
+
+      let dw = width;
+      let dh = height;
+      let dx = 0;
+      let dy = 0;
+      if (aspect < slotAspect) {
+        dw = height * aspect;
+        dx = (width - dw) / 2;
+      } else {
+        dh = width / aspect;
+        dy = (height - dh) / 2;
+      }
+
+      this.videoCtx.drawImage(this.feedVideo, dx, dy, dw, dh);
+
+      // Draw 2x3 CRT Matrix overlay guide lines
+      if (useAppStore.getState().shaders.matrixSplit) {
+        this.videoCtx.strokeStyle = 'rgba(240, 165, 0, 0.5)';
+        this.videoCtx.lineWidth = 1;
+        this.videoCtx.beginPath();
+        this.videoCtx.moveTo(dx + dw * 0.5, dy);
+        this.videoCtx.lineTo(dx + dw * 0.5, dy + dh);
+        this.videoCtx.moveTo(dx, dy + dh * (1 / 3));
+        this.videoCtx.lineTo(dx + dw, dy + dh * (1 / 3));
+        this.videoCtx.moveTo(dx, dy + dh * (2 / 3));
+        this.videoCtx.lineTo(dx + dw, dy + dh * (2 / 3));
+        this.videoCtx.stroke();
+      }
+
+      // Update Time / Duration & Resolution controllers
+      const cur = formatShortTime(this.feedVideo.currentTime);
+      const dur = formatShortTime(this.feedVideo.duration);
+      if (this.timeController) {
+        this.timeController.time = `${cur} / ${dur} (${vw}×${vh})`;
+      }
+
+      // Update Now Playing controller
+      const currentItem = this.videoQueue?.getCurrentItem();
+      if (this.nowPlayingController && currentItem) {
+        this.nowPlayingController.title = currentItem.title;
+      }
+    }
+  }
+
   dispose(): void {
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     this.gui?.destroy();
     this.gui = null;
   }
+}
+
+function formatShortTime(totalSec: number): string {
+  if (!totalSec || isNaN(totalSec) || !isFinite(totalSec)) return '0:00';
+  const mins = Math.floor(totalSec / 60);
+  const secs = Math.floor(totalSec % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }

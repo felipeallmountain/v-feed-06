@@ -76,12 +76,24 @@ export class App {
     this.camera = new CameraManager(webcam);
     this.tracker = new MediaPipeTracker();
     this.debug = new DebugView(debugCanvas);
-    this.hud.attach(this.videoQueue);
+    this.hud.attach(this.videoQueue, feedVideo);
     this.hud.init();
     this.videoQueue.attach(this.scene.videoPass, this.scene);
 
     await this.refreshDiagnostics();
     this.bindUnlock();
+
+    // Unlock audio on initial user gesture or screen interaction
+    const unlockAudioOnGesture = async () => {
+      try {
+        await this.audio.unlock(feedVideo);
+      } catch (err) {
+        console.warn('[v-feed] Audio gesture unlock warning:', err);
+      }
+    };
+    window.addEventListener('click', unlockAudioOnGesture, { once: true });
+    window.addEventListener('keydown', unlockAudioOnGesture, { once: true });
+    window.addEventListener('pointerdown', unlockAudioOnGesture, { once: true });
 
     void this.videoQueue.init();
 
@@ -119,7 +131,8 @@ export class App {
 
       this.skeleton?.draw(frame);
       this.scene?.render();
-      this.debug?.draw(frame, webcam);
+      this.debug?.draw(frame, webcam, feedVideo);
+      this.hud.update(feedVideo);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -194,7 +207,8 @@ export class App {
     }
 
     try {
-      await this.audio.unlock();
+      const fv = document.querySelector<HTMLVideoElement>('#feed-video') ?? undefined;
+      await this.audio.unlock(fv);
     } catch (err) {
       console.warn('[v-feed] Audio unlock failed:', err);
     }

@@ -63,11 +63,67 @@ export interface TrackingState {
 }
 
 export type SkeletonStyle = 'phosphor' | 'cyan' | 'amber' | 'magenta';
+export type DebugViewMode = 'video' | 'camera' | 'split';
+export type FrameShapeStyle =
+  | 'crt-tube'
+  | 'bracket-corners'
+  | 'rounded-rect'
+  | 'industrial-bezel'
+  | 'minimal-ticks';
+
+export interface FrameState {
+  show: boolean;
+  shapeStyle: FrameShapeStyle;
+  followTubeCurvature: boolean;
+  curvatureScale: number;
+  cornerRadius: number;
+  inset: number;
+  thickness: number;
+  opacity: number;
+  showLabels: boolean;
+  showCrosshairs: boolean;
+  showCornerBrackets: boolean;
+  customLabels: string[];
+  customSubtitles: string[];
+}
+
+export const DEFAULT_SCREEN_LABELS = [
+  'CRT [01]',
+  'CRT [02]',
+  'CRT [03]',
+  'CRT [04]',
+  'CRT [05]',
+  'CRT [06]',
+];
+
+export const DEFAULT_SCREEN_SUBTITLES = [
+  'TOP-LEFT',
+  'TOP-RIGHT',
+  'MID-LEFT',
+  'MID-RIGHT',
+  'BOT-LEFT',
+  'BOT-RIGHT',
+];
+
+export interface AudioState {
+  masterVolume: number;
+  videoVolume: number;
+  noiseVolume: number;
+  humVolume: number;
+  antennaModulation: boolean;
+  muted: boolean;
+}
 
 export interface AppState {
   fps: number;
   debugOverlay: boolean;
+  debugViewMode: DebugViewMode;
+  debugVideoAudio: boolean;
   skeletonOverlay: boolean;
+  showScreenFrames: boolean;
+  screenFrameOpacity: number;
+  frames: FrameState;
+  audio: AudioState;
   skeletonStyle: SkeletonStyle;
   skeletonThickness: number;
   skeletonLineThickness: number;
@@ -87,7 +143,15 @@ export interface AppState {
   setHudVisible: (visible: boolean) => void;
   toggleHud: () => void;
   setDebugOverlay: (visible: boolean) => void;
+  setDebugViewMode: (mode: DebugViewMode) => void;
+  setDebugVideoAudio: (enabled: boolean) => void;
   setSkeletonOverlay: (enabled: boolean) => void;
+  setShowScreenFrames: (show: boolean) => void;
+  setScreenFrameOpacity: (opacity: number) => void;
+  setFrames: (partial: Partial<FrameState>) => void;
+  setScreenCustomLabel: (index: number, title: string, subtitle?: string) => void;
+  resetScreenLabels: () => void;
+  setAudioState: (partial: Partial<AudioState>) => void;
   setSkeletonStyle: (style: SkeletonStyle) => void;
   setSkeletonThickness: (thickness: number) => void;
   setSkeletonLineThickness: (v: number) => void;
@@ -250,7 +314,34 @@ export const CRT_TUBE_SHADERS: ShaderUniformsState = {
 export const useAppStore = createStore<AppState>((set) => ({
   fps: 0,
   debugOverlay: false,
+  debugViewMode: 'video',
+  debugVideoAudio: false,
   skeletonOverlay: true,
+  showScreenFrames: true,
+  screenFrameOpacity: 0.85,
+  frames: {
+    show: true,
+    shapeStyle: 'crt-tube',
+    followTubeCurvature: true,
+    curvatureScale: 1.0,
+    cornerRadius: 0.08,
+    inset: 0.035,
+    thickness: 2.0,
+    opacity: 0.85,
+    showLabels: true,
+    showCrosshairs: true,
+    showCornerBrackets: true,
+    customLabels: [...DEFAULT_SCREEN_LABELS],
+    customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
+  },
+  audio: {
+    masterVolume: 0.8,
+    videoVolume: 0.9,
+    noiseVolume: 0.35,
+    humVolume: 0.02,
+    antennaModulation: true,
+    muted: false,
+  },
   skeletonStyle: 'phosphor',
   skeletonThickness: 2,
   skeletonLineThickness: 2,
@@ -262,7 +353,7 @@ export const useAppStore = createStore<AppState>((set) => ({
   skeletonJitter: 0.35,
   hudVisible: false,
   audioUnlocked: false,
-  videoMode: 'cache',
+  videoMode: 'live',
   currentVideoUrl: null,
   tracking: {
     present: false,
@@ -284,7 +375,51 @@ export const useAppStore = createStore<AppState>((set) => ({
   setHudVisible: (hudVisible) => set({ hudVisible }),
   toggleHud: () => set((s) => ({ hudVisible: !s.hudVisible })),
   setDebugOverlay: (debugOverlay) => set({ debugOverlay }),
+  setDebugViewMode: (debugViewMode) => set({ debugViewMode }),
+  setDebugVideoAudio: (debugVideoAudio) => set({ debugVideoAudio }),
   setSkeletonOverlay: (skeletonOverlay) => set({ skeletonOverlay }),
+  setShowScreenFrames: (showScreenFrames) =>
+    set((s) => ({
+      showScreenFrames,
+      frames: { ...s.frames, show: showScreenFrames },
+    })),
+  setScreenFrameOpacity: (screenFrameOpacity) =>
+    set((s) => ({
+      screenFrameOpacity,
+      frames: { ...s.frames, opacity: screenFrameOpacity },
+    })),
+  setFrames: (partial) =>
+    set((s) => ({
+      frames: { ...s.frames, ...partial },
+      showScreenFrames: partial.show !== undefined ? partial.show : s.showScreenFrames,
+      screenFrameOpacity: partial.opacity !== undefined ? partial.opacity : s.screenFrameOpacity,
+    })),
+  setScreenCustomLabel: (index, title, subtitle) =>
+    set((s) => {
+      const nextLabels = [...s.frames.customLabels];
+      const nextSubs = [...s.frames.customSubtitles];
+      if (index >= 0 && index < 6) {
+        nextLabels[index] = title;
+        if (subtitle !== undefined) nextSubs[index] = subtitle;
+      }
+      return {
+        frames: {
+          ...s.frames,
+          customLabels: nextLabels,
+          customSubtitles: nextSubs,
+        },
+      };
+    }),
+  resetScreenLabels: () =>
+    set((s) => ({
+      frames: {
+        ...s.frames,
+        customLabels: [...DEFAULT_SCREEN_LABELS],
+        customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
+      },
+    })),
+  setAudioState: (partial) =>
+    set((s) => ({ audio: { ...s.audio, ...partial } })),
   setSkeletonStyle: (skeletonStyle) => set({ skeletonStyle }),
   setSkeletonThickness: (v) => set({ skeletonThickness: v, skeletonLineThickness: v }),
   setSkeletonLineThickness: (v) => set({ skeletonLineThickness: v, skeletonThickness: v }),

@@ -21,63 +21,197 @@ export class DebugView {
     useAppStore.getState().setFps(Math.round(fps));
   }
 
-  draw(frame: TrackerFrame | null, webcam: HTMLVideoElement): void {
-    const show = useAppStore.getState().debugOverlay;
+  draw(
+    frame: TrackerFrame | null,
+    webcam: HTMLVideoElement,
+    feedVideo?: HTMLVideoElement | null,
+  ): void {
+    const state = useAppStore.getState();
+    const show = state.debugOverlay;
     this.canvas.classList.toggle('visible', show);
     if (!show) return;
 
+    const mode = state.debugViewMode || 'video';
     const { width, height } = this.canvas;
     this.ctx.clearRect(0, 0, width, height);
-    this.ctx.fillStyle = '#000';
+    this.ctx.fillStyle = '#06070a';
     this.ctx.fillRect(0, 0, width, height);
 
-    if (webcam.readyState >= 2) {
+    if (mode === 'split') {
+      const halfW = Math.floor(width / 2);
+      // Left: Camera
       this.ctx.save();
-      if (useAppStore.getState().tracking.mirrorCamera) {
-        this.ctx.translate(width, 0);
-        this.ctx.scale(-1, 1);
-      }
-      this.ctx.drawImage(webcam, 0, 0, width, height);
+      this.ctx.beginPath();
+      this.ctx.rect(0, 0, halfW, height);
+      this.ctx.clip();
+      this.drawCamera(0, 0, halfW, height, frame, webcam, state.tracking.mirrorCamera);
       this.ctx.restore();
+
+      // Divider line
+      this.ctx.strokeStyle = '#222633';
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(halfW, 0);
+      this.ctx.lineTo(halfW, height);
+      this.ctx.stroke();
+
+      // Right: Video
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(halfW, 0, halfW, height);
+      this.ctx.clip();
+      this.drawVideo(halfW, 0, halfW, height, feedVideo, state.shaders.matrixSplit);
+      this.ctx.restore();
+
+      // Header labels
+      this.ctx.font = '10px monospace';
+      this.ctx.fillStyle = '#3ddc97';
+      this.ctx.fillText('CAM/TRACKING', 6, 14);
+      this.ctx.fillStyle = '#00e5ff';
+      this.ctx.fillText('YOUTUBE SHORT', halfW + 6, 14);
+    } else if (mode === 'video') {
+      this.drawVideo(0, 0, width, height, feedVideo, state.shaders.matrixSplit);
+    } else {
+      this.drawCamera(0, 0, width, height, frame, webcam, state.tracking.mirrorCamera);
     }
 
-    // Draw 2x3 CRT Matrix overlay guide lines
-    if (useAppStore.getState().shaders.matrixSplit) {
-      this.ctx.strokeStyle = 'rgba(240, 165, 0, 0.4)';
-      this.ctx.lineWidth = 1;
-      this.ctx.beginPath();
-      this.ctx.moveTo(width * 0.5, 0);
-      this.ctx.lineTo(width * 0.5, height);
-      this.ctx.moveTo(0, height * (1 / 3));
-      this.ctx.lineTo(width, height * (1 / 3));
-      this.ctx.moveTo(0, height * (2 / 3));
-      this.ctx.lineTo(width, height * (2 / 3));
-      this.ctx.stroke();
+    // Telemetry text overlay
+    this.drawTelemetry(state);
+  }
+
+  private drawCamera(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    frame: TrackerFrame | null,
+    webcam: HTMLVideoElement,
+    mirror: boolean,
+  ): void {
+    if (webcam.readyState >= 2) {
+      this.ctx.save();
+      if (mirror) {
+        this.ctx.translate(x + w, y);
+        this.ctx.scale(-1, 1);
+        this.ctx.drawImage(webcam, 0, 0, w, h);
+      } else {
+        this.ctx.drawImage(webcam, x, y, w, h);
+      }
+      this.ctx.restore();
     }
 
     if (frame?.landmarks) {
       this.ctx.fillStyle = '#3ddc97';
       for (const p of frame.landmarks) {
         this.ctx.beginPath();
-        this.ctx.arc(p.x * width, p.y * height, 2.5, 0, Math.PI * 2);
+        const px = mirror ? x + (1 - p.x) * w : x + p.x * w;
+        const py = y + p.y * h;
+        this.ctx.arc(px, py, 2.5, 0, Math.PI * 2);
         this.ctx.fill();
       }
     }
+  }
 
-    const state = useAppStore.getState();
-    const fps = state.fps;
+  private drawVideo(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    feedVideo?: HTMLVideoElement | null,
+    matrixSplit = true,
+  ): void {
+    if (feedVideo && feedVideo.readyState >= 2) {
+      const vw = feedVideo.videoWidth || 1080;
+      const vh = feedVideo.videoHeight || 1920;
+      const videoAspect = vw / vh;
+      const slotAspect = w / h;
+
+      let drawW = w;
+      let drawH = h;
+      let drawX = x;
+      let drawY = y;
+
+      if (videoAspect < slotAspect) {
+        // Vertical video letterboxed horizontally
+        drawW = h * videoAspect;
+        drawX = x + (w - drawW) / 2;
+      } else {
+        // Letterboxed vertically
+        drawH = w / videoAspect;
+        drawY = y + (h - drawH) / 2;
+      }
+
+      this.ctx.drawImage(feedVideo, drawX, drawY, drawW, drawH);
+
+      // Draw 2x3 CRT Matrix overlay guide lines
+      if (matrixSplit) {
+        this.ctx.strokeStyle = 'rgba(240, 165, 0, 0.45)';
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        // Vertical center line (2 columns)
+        this.ctx.moveTo(drawX + drawW * 0.5, drawY);
+        this.ctx.lineTo(drawX + drawW * 0.5, drawY + drawH);
+        // Horizontal lines (3 rows)
+        this.ctx.moveTo(drawX, drawY + drawH * (1 / 3));
+        this.ctx.lineTo(drawX + drawW, drawY + drawH * (1 / 3));
+        this.ctx.moveTo(drawX, drawY + drawH * (2 / 3));
+        this.ctx.lineTo(drawX + drawW, drawY + drawH * (2 / 3));
+        this.ctx.stroke();
+
+        // 6-screen quadrant labels
+        this.ctx.fillStyle = 'rgba(240, 165, 0, 0.7)';
+        this.ctx.font = '8px monospace';
+        const qW = drawW / 2;
+        const qH = drawH / 3;
+        for (let r = 0; r < 3; r++) {
+          for (let c = 0; c < 2; c++) {
+            const idx = r * 2 + c + 1;
+            this.ctx.fillText(
+              `CRT [0${idx}]`,
+              drawX + c * qW + 4,
+              drawY + r * qH + 11,
+            );
+          }
+        }
+      }
+
+      // Video status badge
+      const isPaused = feedVideo.paused;
+      const statusText = isPaused ? '⏸ PAUSED' : '▶ LIVE FEED';
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      this.ctx.fillRect(drawX + 4, drawY + drawH - 18, 120, 14);
+      this.ctx.fillStyle = isPaused ? '#f0a500' : '#3ddc97';
+      this.ctx.font = '9px monospace';
+      this.ctx.fillText(statusText, drawX + 8, drawY + drawH - 7);
+    } else {
+      // Waiting for video feed
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      this.ctx.fillRect(x, y, w, h);
+      this.ctx.fillStyle = '#8a92a6';
+      this.ctx.font = '10px monospace';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('NO ACTIVE VIDEO FEED', x + w / 2, y + h / 2);
+      this.ctx.textAlign = 'left';
+    }
+  }
+
+  private drawTelemetry(state: ReturnType<typeof useAppStore.getState>): void {
+    const { width, height } = this.canvas;
+
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    this.ctx.fillRect(0, height - 20, width, 20);
+
     this.ctx.fillStyle = '#e8e4d9';
-    this.ctx.font = '11px monospace';
-    this.ctx.fillText(`${fps} FPS`, 8, 16);
-    this.ctx.fillText(
-      state.tracking.present ? 'PRESENT' : 'IDLE',
-      8,
-      30,
-    );
-    this.ctx.fillText(
-      `DIST: ${state.tracking.distance.toFixed(2)}m`,
-      8,
-      44,
-    );
+    this.ctx.font = '10px monospace';
+    this.ctx.fillText(`${state.fps} FPS`, 6, height - 7);
+
+    const modeLabel = `MODE: ${state.videoMode.toUpperCase()}`;
+    this.ctx.fillText(modeLabel, 60, height - 7);
+
+    const trackLabel = state.tracking.present
+      ? `USER: ${state.tracking.distance.toFixed(1)}m`
+      : 'USER: IDLE';
+    this.ctx.fillStyle = state.tracking.present ? '#3ddc97' : '#8a92a6';
+    this.ctx.fillText(trackLabel, width - 85, height - 7);
   }
 }

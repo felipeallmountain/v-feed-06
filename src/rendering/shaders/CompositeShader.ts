@@ -182,8 +182,13 @@ void main() {
   // Render Bezel / Chassis if fragment is outside all 6 CRT screens
   if (matchedScreen < 0) {
     if (uBezelChassis > 0.5) {
-      float grain = hash21(uv * uResolution * 0.25) * 0.012;
-      vec3 casing = vec3(0.038, 0.038, 0.044) + vec3(grain);
+      float grain = hash21(uv * uResolution * 0.25) * 0.02;
+      // 3D beveled horizontal and vertical center divider seams
+      float seamX = smoothstep(0.0005, 0.0035, abs(uv.x - 0.5));
+      float seamY1 = smoothstep(0.0005, 0.0035, abs(uv.y - 1.0 / 3.0));
+      float seamY2 = smoothstep(0.0005, 0.0035, abs(uv.y - 2.0 / 3.0));
+      float seam = min(seamX, min(seamY1, seamY2));
+      vec3 casing = (vec3(0.052, 0.054, 0.060) + vec3(grain)) * (0.55 + 0.45 * seam);
       gl_FragColor = vec4(casing, 1.0);
       return;
     } else {
@@ -246,8 +251,8 @@ void main() {
 
   if (outsideTube) {
     if (uBezelChassis > 0.5) {
-      float grain = hash21(uv * uResolution * 0.25) * 0.012;
-      vec3 casing = vec3(0.02, 0.02, 0.024) + vec3(grain);
+      float grain = hash21(uv * uResolution * 0.25) * 0.018;
+      vec3 casing = vec3(0.028, 0.030, 0.035) + vec3(grain);
       gl_FragColor = vec4(casing, 1.0);
       return;
     } else {
@@ -289,6 +294,13 @@ void main() {
   color = phosphor(color, curvedLocalUv, uPhosphor, cellRes);
   color *= vignette(curvedLocalUv, uVignette);
   color *= cornerFactor;
+
+  // Inner glass rim bevel and bezel shadow around each CRT tube
+  float edgeDistX = min(curvedLocalUv.x, 1.0 - curvedLocalUv.x);
+  float edgeDistY = min(curvedLocalUv.y, 1.0 - curvedLocalUv.y);
+  float edgeDist = min(edgeDistX, edgeDistY);
+  float glassRim = smoothstep(0.0, 0.022, edgeDist);
+  color *= 0.72 + 0.28 * glassRim;
 
   // Glass specular highlight on each CRT tube
   if (uTubeCurve > 0.5) {
