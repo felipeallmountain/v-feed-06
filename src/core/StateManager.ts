@@ -3,6 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import {
   createDefaultCornerOffsets,
   createDefaultScreenFlips,
+  createDefaultScreenOffsets,
   type ScreenCornerOffsets,
   type ScreenFlipState,
 } from '../rendering/MatrixSplitter';
@@ -29,7 +30,10 @@ export interface ShaderUniformsState {
   globalFlipV: boolean;
   globalRotation: number; // 0, 90, 180, 270
   globalFineRotation: number; // [-180, 180]
+  globalOffsetX: number; // [-0.5, 0.5]
+  globalOffsetY: number; // [-0.5, 0.5]
   screenFlips: ScreenFlipState[];
+  screenOffsets: Array<[number, number]>;
   cornerOffsets: ScreenCornerOffsets[];
   showCornerHandles: boolean;
   tubeCurve: boolean;
@@ -63,6 +67,8 @@ export interface TrackingState {
   minDistance: number;
   maxDistance: number;
   screenPresences: number[];
+  personCount: number;
+  maxNumPoses: number;
   antennaLocalWeight: number;
   antennaHandBoost: number;
   antennaSmoothing: number;
@@ -78,6 +84,12 @@ export type FrameShapeStyle =
   | 'industrial-bezel'
   | 'minimal-ticks';
 
+export interface ScreenFrameTransform {
+  offsetX: number;
+  offsetY: number;
+  rotation: number; // in degrees (-180 to +180)
+}
+
 export interface FrameState {
   show: boolean;
   shapeStyle: FrameShapeStyle;
@@ -90,8 +102,20 @@ export interface FrameState {
   showLabels: boolean;
   showCrosshairs: boolean;
   showCornerBrackets: boolean;
+  rotation: number; // Global frame rotation in degrees (-180 to +180)
+  offsetX: number; // Global frame X offset (-0.5 to +0.5)
+  offsetY: number; // Global frame Y offset (-0.5 to +0.5)
+  screenTransforms: ScreenFrameTransform[]; // Per-screen transforms (CRT 01 - 06)
   customLabels: string[];
   customSubtitles: string[];
+}
+
+export function createDefaultFrameTransforms(): ScreenFrameTransform[] {
+  return Array.from({ length: 6 }, () => ({
+    offsetX: 0,
+    offsetY: 0,
+    rotation: 0,
+  }));
 }
 
 export const DEFAULT_SCREEN_LABELS = [
@@ -156,6 +180,14 @@ export interface AppState {
   setShowScreenFrames: (show: boolean) => void;
   setScreenFrameOpacity: (opacity: number) => void;
   setFrames: (partial: Partial<FrameState>) => void;
+  setScreenFrameTransform: (
+    index: number,
+    transform: Partial<ScreenFrameTransform>,
+  ) => void;
+  setGlobalFrameTransform: (
+    transform: Partial<{ rotation: number; offsetX: number; offsetY: number }>,
+  ) => void;
+  resetScreenFrameTransforms: () => void;
   setScreenCustomLabel: (index: number, title: string, subtitle?: string) => void;
   resetScreenLabels: () => void;
   setAudioState: (partial: Partial<AudioState>) => void;
@@ -181,6 +213,10 @@ export interface AppState {
   ) => void;
   resetScreenCorners: (screenIndex: number) => void;
   resetAllCorners: () => void;
+  setScreenOffset: (screenIndex: number, axis: 0 | 1, value: number) => void;
+  resetScreenOffset: (screenIndex: number) => void;
+  setGlobalOffset: (axis: 'x' | 'y', value: number) => void;
+  resetAllOffsets: () => void;
   setScreenFlip: (screenIndex: number, axis: 'h' | 'v', value: boolean) => void;
   setScreenRotation: (screenIndex: number, rotation: number) => void;
   setScreenFineRotation: (screenIndex: number, fineRotation: number) => void;
@@ -207,7 +243,10 @@ export const CRT_6X_TOTEM_PRESET: ShaderUniformsState = {
   globalFlipV: false,
   globalRotation: 0,
   globalFineRotation: 0,
+  globalOffsetX: 0,
+  globalOffsetY: 0,
   screenFlips: createDefaultScreenFlips(),
+  screenOffsets: createDefaultScreenOffsets(),
   cornerOffsets: createDefaultCornerOffsets(),
   showCornerHandles: false,
   tubeCurve: true,
@@ -240,7 +279,10 @@ export const CRT_6X_PHYSICAL_PRESET: ShaderUniformsState = {
   globalFlipV: false,
   globalRotation: 0,
   globalFineRotation: 0,
+  globalOffsetX: 0,
+  globalOffsetY: 0,
   screenFlips: createDefaultScreenFlips(),
+  screenOffsets: createDefaultScreenOffsets(),
   cornerOffsets: createDefaultCornerOffsets(),
   showCornerHandles: false,
   tubeCurve: false,
@@ -273,7 +315,10 @@ export const FLAT_DISPLAY_SHADERS: ShaderUniformsState = {
   globalFlipV: false,
   globalRotation: 0,
   globalFineRotation: 0,
+  globalOffsetX: 0,
+  globalOffsetY: 0,
   screenFlips: createDefaultScreenFlips(),
+  screenOffsets: createDefaultScreenOffsets(),
   cornerOffsets: createDefaultCornerOffsets(),
   showCornerHandles: false,
   tubeCurve: false,
@@ -306,7 +351,10 @@ export const CRT_TUBE_SHADERS: ShaderUniformsState = {
   globalFlipV: false,
   globalRotation: 0,
   globalFineRotation: 0,
+  globalOffsetX: 0,
+  globalOffsetY: 0,
   screenFlips: createDefaultScreenFlips(),
+  screenOffsets: createDefaultScreenOffsets(),
   cornerOffsets: createDefaultCornerOffsets(),
   showCornerHandles: false,
   tubeCurve: true,
@@ -346,6 +394,10 @@ export const useAppStore = createStore<AppState>((set) => ({
     showLabels: true,
     showCrosshairs: true,
     showCornerBrackets: true,
+    rotation: 0,
+    offsetX: 0,
+    offsetY: 0,
+    screenTransforms: createDefaultFrameTransforms(),
     customLabels: [...DEFAULT_SCREEN_LABELS],
     customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
   },
@@ -385,6 +437,8 @@ export const useAppStore = createStore<AppState>((set) => ({
     minDistance: 1.0,
     maxDistance: 3.0,
     screenPresences: [0, 0, 0, 0, 0, 0],
+    personCount: 0,
+    maxNumPoses: 4,
     antennaLocalWeight: 0.95,
     antennaHandBoost: 1.6,
     antennaSmoothing: 0.22,
@@ -410,9 +464,50 @@ export const useAppStore = createStore<AppState>((set) => ({
     })),
   setFrames: (partial) =>
     set((s) => ({
-      frames: { ...s.frames, ...partial },
+      frames: {
+        ...s.frames,
+        ...partial,
+        screenTransforms:
+          partial.screenTransforms !== undefined
+            ? partial.screenTransforms.map((t, i) => ({
+                offsetX: t?.offsetX ?? s.frames.screenTransforms?.[i]?.offsetX ?? 0,
+                offsetY: t?.offsetY ?? s.frames.screenTransforms?.[i]?.offsetY ?? 0,
+                rotation: t?.rotation ?? s.frames.screenTransforms?.[i]?.rotation ?? 0,
+              }))
+            : (s.frames.screenTransforms ?? createDefaultFrameTransforms()),
+      },
       showScreenFrames: partial.show !== undefined ? partial.show : s.showScreenFrames,
       screenFrameOpacity: partial.opacity !== undefined ? partial.opacity : s.screenFrameOpacity,
+    })),
+  setScreenFrameTransform: (index, transform) =>
+    set((s) => {
+      const current = s.frames.screenTransforms ?? createDefaultFrameTransforms();
+      const next = current.map((item, i) =>
+        i === index ? { ...item, ...transform } : { ...item }
+      );
+      return {
+        frames: {
+          ...s.frames,
+          screenTransforms: next,
+        },
+      };
+    }),
+  setGlobalFrameTransform: (transform) =>
+    set((s) => ({
+      frames: {
+        ...s.frames,
+        ...transform,
+      },
+    })),
+  resetScreenFrameTransforms: () =>
+    set((s) => ({
+      frames: {
+        ...s.frames,
+        rotation: 0,
+        offsetX: 0,
+        offsetY: 0,
+        screenTransforms: createDefaultFrameTransforms(),
+      },
     })),
   setScreenCustomLabel: (index, title, subtitle) =>
     set((s) => {
@@ -455,7 +550,15 @@ export const useAppStore = createStore<AppState>((set) => ({
   patchTracking: (partial) =>
     set((s) => ({ tracking: { ...s.tracking, ...partial } })),
   patchShaders: (partial) =>
-    set((s) => ({ shaders: { ...s.shaders, ...partial } })),
+    set((s) => ({
+      shaders: {
+        ...s.shaders,
+        ...partial,
+        screenOffsets: partial.screenOffsets ?? s.shaders.screenOffsets ?? createDefaultScreenOffsets(),
+        screenFlips: partial.screenFlips ?? s.shaders.screenFlips ?? createDefaultScreenFlips(),
+        cornerOffsets: partial.cornerOffsets ?? s.shaders.cornerOffsets ?? createDefaultCornerOffsets(),
+      },
+    })),
   setCornerOffset: (screenIndex, corner, axis, value) =>
     set((s) => {
       const nextOffsets = s.shaders.cornerOffsets.map((item, i) => {
@@ -492,6 +595,51 @@ export const useAppStore = createStore<AppState>((set) => ({
       shaders: {
         ...s.shaders,
         cornerOffsets: createDefaultCornerOffsets(),
+      },
+    })),
+  setScreenOffset: (screenIndex, axis, value) =>
+    set((s) => {
+      const nextOffsets = (s.shaders.screenOffsets || createDefaultScreenOffsets()).map(
+        (item, i) => {
+          if (i !== screenIndex) return item;
+          const next: [number, number] = [item[0], item[1]];
+          next[axis] = value;
+          return next;
+        },
+      );
+      return {
+        shaders: {
+          ...s.shaders,
+          screenOffsets: nextOffsets,
+        },
+      };
+    }),
+  resetScreenOffset: (screenIndex) =>
+    set((s) => {
+      const nextOffsets = (s.shaders.screenOffsets || createDefaultScreenOffsets()).map(
+        (item, i) => (i === screenIndex ? ([0, 0] as [number, number]) : item),
+      );
+      return {
+        shaders: {
+          ...s.shaders,
+          screenOffsets: nextOffsets,
+        },
+      };
+    }),
+  setGlobalOffset: (axis, value) =>
+    set((s) => ({
+      shaders: {
+        ...s.shaders,
+        [axis === 'x' ? 'globalOffsetX' : 'globalOffsetY']: value,
+      },
+    })),
+  resetAllOffsets: () =>
+    set((s) => ({
+      shaders: {
+        ...s.shaders,
+        globalOffsetX: 0,
+        globalOffsetY: 0,
+        screenOffsets: createDefaultScreenOffsets(),
       },
     })),
   setScreenFlip: (screenIndex, axis, value) =>

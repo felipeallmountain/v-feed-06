@@ -114,9 +114,16 @@ export class DebugView {
       this.ctx.stroke();
     }
 
-    if (frame?.landmarks) {
+    const poses =
+      frame?.poses && frame.poses.length > 0
+        ? frame.poses
+        : frame?.landmarks
+          ? [frame.landmarks]
+          : [];
+
+    for (const lm of poses) {
       this.ctx.fillStyle = '#3ddc97';
-      for (const p of frame.landmarks) {
+      for (const p of lm) {
         this.ctx.beginPath();
         const px = mirror ? x + (1 - p.x) * w : x + p.x * w;
         const py = y + p.y * h;
@@ -250,10 +257,11 @@ export class DebugView {
     const modeLabel = `MODE: ${state.videoMode.toUpperCase()}`;
     this.ctx.fillText(modeLabel, 60, height - 7);
 
+    const peopleCount = state.tracking.personCount || (state.tracking.present ? 1 : 0);
     const trackLabel = state.tracking.present
-      ? `USER: ${state.tracking.distance.toFixed(1)}m`
+      ? `PEOPLE: ${peopleCount} (${state.tracking.distance.toFixed(1)}m)`
       : 'USER: IDLE';
     this.ctx.fillStyle = state.tracking.present ? '#3ddc97' : '#8a92a6';
-    this.ctx.fillText(trackLabel, width - 85, height - 7);
+    this.ctx.fillText(trackLabel, width - 130, height - 7);
   }
 }

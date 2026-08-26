@@ -23,6 +23,7 @@ interface SavedCalibration {
     distanceOffset?: number;
     minDistance?: number;
     maxDistance?: number;
+    maxNumPoses?: number;
     antennaLocalWeight?: number;
     antennaHandBoost?: number;
     antennaSmoothing?: number;
@@ -72,12 +73,15 @@ export class CalibrationHUD {
     gui.hide();
     this.gui = gui;
 
-    const presets = gui.addFolder('Presets');
+    const presets = gui.addFolder('Presets & Calibration Storage');
     presets.add({ totem: () => this.applyPreset(CRT_6X_TOTEM_PRESET) }, 'totem').name('6x CRT Totem (Wall)');
     presets.add({ physical: () => this.applyPreset(CRT_6X_PHYSICAL_PRESET) }, 'physical').name('6x Physical Output');
     presets.add({ flat: () => this.applyPreset(FLAT_DISPLAY_SHADERS) }, 'flat').name('1x Flat Screen');
     presets.add({ crt: () => this.applyPreset(CRT_TUBE_SHADERS) }, 'crt').name('1x CRT Tube');
-    presets.add({ save: () => this.persist() }, 'save').name('Save to browser');
+    presets.add({ save: () => this.saveToBrowserAndServer() }, 'save').name('💾 Save to Browser & Disk');
+    presets.add({ export: () => this.exportCalibrationJson() }, 'export').name('📥 Export File (.json)');
+    presets.add({ import: () => this.importCalibrationJson() }, 'import').name('📤 Import File (.json)');
+    presets.add({ copy: () => this.copyToClipboard() }, 'copy').name('📋 Copy JSON to Clipboard');
     presets.add({ reset: () => this.applyPreset(CRT_6X_TOTEM_PRESET) }, 'reset').name('Reset defaults');
 
     this.shaderBindings = { ...store.shaders };
@@ -291,10 +295,12 @@ export class CalibrationHUD {
       )
       .name('Reset Default Labels');
 
-    const cornerFolder = gui.addFolder('Corner Pinning / Keystone (6 Screens)');
+    const cornerFolder = gui.addFolder('Corner Pinning, Offset & Keystone (6 Screens)');
     const cornerState = {
       showHandles: store.shaders.showCornerHandles,
       selectedScreen: 0,
+      offsetX: store.shaders.screenOffsets?.[0]?.[0] ?? 0,
+      offsetY: store.shaders.screenOffsets?.[0]?.[1] ?? 0,
       rotation: 0,
       fineRotation: 0,
       flipH: false,
@@ -330,6 +336,22 @@ export class CalibrationHUD {
       .name('Show Corner Target Guides')
       .onChange((v: boolean) => {
         store.patchShaders({ showCornerHandles: v });
+        this.persist();
+      });
+
+    const offXCtrl = cornerFolder
+      .add(cornerState, 'offsetX', -0.25, 0.25, 0.001)
+      .name('Screen X Offset')
+      .onChange((v: number) => {
+        store.setScreenOffset(cornerState.selectedScreen, 0, v);
+        this.persist();
+      });
+
+    const offYCtrl = cornerFolder
+      .add(cornerState, 'offsetY', -0.25, 0.25, 0.001)
+      .name('Screen Y Offset')
+      .onChange((v: number) => {
+        store.setScreenOffset(cornerState.selectedScreen, 1, v);
         this.persist();
       });
 
@@ -411,6 +433,9 @@ export class CalibrationHUD {
         rotation: 0,
         fineRotation: 0,
       };
+      const currentOffset = store.shaders.screenOffsets?.[cornerState.selectedScreen] ?? [0, 0];
+      cornerState.offsetX = currentOffset[0];
+      cornerState.offsetY = currentOffset[1];
       cornerState.rotation = currentFlip.rotation || 0;
       cornerState.fineRotation = currentFlip.fineRotation || 0;
       cornerState.flipH = currentFlip.flipH;
@@ -423,6 +448,8 @@ export class CalibrationHUD {
       cornerState.brY = current.br[1];
       cornerState.blX = current.bl[0];
       cornerState.blY = current.bl[1];
+      offXCtrl.updateDisplay();
+      offYCtrl.updateDisplay();
       rotCtrl.updateDisplay();
       fineRotCtrl.updateDisplay();
       flipHCtrl.updateDisplay();
@@ -447,14 +474,16 @@ export class CalibrationHUD {
     cornerFolder.add({
       resetScreen: () => {
         store.resetScreenCorners(cornerState.selectedScreen);
+        store.resetScreenOffset(cornerState.selectedScreen);
         updateCornerControllers();
         this.persist();
       },
-    }, 'resetScreen').name('Reset active screen corners');
+    }, 'resetScreen').name('Reset active screen corners & offset');
 
     cornerFolder.add({
       resetAll: () => {
         store.resetAllCorners();
+        store.resetAllOffsets();
         updateCornerControllers();
         this.persist();
       },
@@ -462,7 +491,7 @@ export class CalibrationHUD {
 
     updateCornerControllers();
 
-    const flipFolder = gui.addFolder('Screen Orientation, Rotation & Flips (6 Pieces)');
+    const flipFolder = gui.addFolder('Screen Orientation, Rotation & Offsets (6 Pieces)');
     flipFolder
       .add(sh, 'globalRotation', rotationOptions)
       .name('Global Rotation (90°)')
@@ -475,6 +504,20 @@ export class CalibrationHUD {
       .name('Global Fine Angle (°)')
       .onChange((v: number) => {
         store.setGlobalFineRotation(v);
+        this.persist();
+      });
+    flipFolder
+      .add(sh, 'globalOffsetX', -0.5, 0.5, 0.001)
+      .name('Global Offset X')
+      .onChange((v: number) => {
+        store.setGlobalOffset('x', v);
+        this.persist();
+      });
+    flipFolder
+      .add(sh, 'globalOffsetY', -0.5, 0.5, 0.001)
+      .name('Global Offset Y')
+      .onChange((v: number) => {
+        store.setGlobalOffset('y', v);
         this.persist();
       });
     flipFolder
@@ -492,33 +535,45 @@ export class CalibrationHUD {
         this.persist();
       });
 
-    const perScreenFlipsFolder = flipFolder.addFolder('Per-Piece Orientation Matrix (CRT 01 - 06)');
+    const perScreenFlipsFolder = flipFolder.addFolder('Per-Piece Position & Orientation (CRT 01 - 06)');
     const flipBindings = {
+      crt1OffX: store.shaders.screenOffsets?.[0]?.[0] ?? 0,
+      crt1OffY: store.shaders.screenOffsets?.[0]?.[1] ?? 0,
       crt1Rot: store.shaders.screenFlips[0]?.rotation ?? 0,
       crt1Fine: store.shaders.screenFlips[0]?.fineRotation ?? 0,
       crt1H: store.shaders.screenFlips[0]?.flipH ?? false,
       crt1V: store.shaders.screenFlips[0]?.flipV ?? false,
 
+      crt2OffX: store.shaders.screenOffsets?.[1]?.[0] ?? 0,
+      crt2OffY: store.shaders.screenOffsets?.[1]?.[1] ?? 0,
       crt2Rot: store.shaders.screenFlips[1]?.rotation ?? 0,
       crt2Fine: store.shaders.screenFlips[1]?.fineRotation ?? 0,
       crt2H: store.shaders.screenFlips[1]?.flipH ?? false,
       crt2V: store.shaders.screenFlips[1]?.flipV ?? false,
 
+      crt3OffX: store.shaders.screenOffsets?.[2]?.[0] ?? 0,
+      crt3OffY: store.shaders.screenOffsets?.[2]?.[1] ?? 0,
       crt3Rot: store.shaders.screenFlips[2]?.rotation ?? 0,
       crt3Fine: store.shaders.screenFlips[2]?.fineRotation ?? 0,
       crt3H: store.shaders.screenFlips[2]?.flipH ?? false,
       crt3V: store.shaders.screenFlips[2]?.flipV ?? false,
 
+      crt4OffX: store.shaders.screenOffsets?.[3]?.[0] ?? 0,
+      crt4OffY: store.shaders.screenOffsets?.[3]?.[1] ?? 0,
       crt4Rot: store.shaders.screenFlips[3]?.rotation ?? 0,
       crt4Fine: store.shaders.screenFlips[3]?.fineRotation ?? 0,
       crt4H: store.shaders.screenFlips[3]?.flipH ?? false,
       crt4V: store.shaders.screenFlips[3]?.flipV ?? false,
 
+      crt5OffX: store.shaders.screenOffsets?.[4]?.[0] ?? 0,
+      crt5OffY: store.shaders.screenOffsets?.[4]?.[1] ?? 0,
       crt5Rot: store.shaders.screenFlips[4]?.rotation ?? 0,
       crt5Fine: store.shaders.screenFlips[4]?.fineRotation ?? 0,
       crt5H: store.shaders.screenFlips[4]?.flipH ?? false,
       crt5V: store.shaders.screenFlips[4]?.flipV ?? false,
 
+      crt6OffX: store.shaders.screenOffsets?.[5]?.[0] ?? 0,
+      crt6OffY: store.shaders.screenOffsets?.[5]?.[1] ?? 0,
       crt6Rot: store.shaders.screenFlips[5]?.rotation ?? 0,
       crt6Fine: store.shaders.screenFlips[5]?.fineRotation ?? 0,
       crt6H: store.shaders.screenFlips[5]?.flipH ?? false,
@@ -528,12 +583,24 @@ export class CalibrationHUD {
     const addFlipPair = (
       id: number,
       name: string,
+      offXKey: keyof typeof flipBindings,
+      offYKey: keyof typeof flipBindings,
       rotKey: keyof typeof flipBindings,
       fineKey: keyof typeof flipBindings,
       hKey: keyof typeof flipBindings,
       vKey: keyof typeof flipBindings,
     ) => {
       const f = perScreenFlipsFolder.addFolder(name);
+      f.add(flipBindings, offXKey, -0.25, 0.25, 0.001).name('Offset X').onChange((v: number) => {
+        store.setScreenOffset(id, 0, v);
+        updateCornerControllers();
+        this.persist();
+      });
+      f.add(flipBindings, offYKey, -0.25, 0.25, 0.001).name('Offset Y').onChange((v: number) => {
+        store.setScreenOffset(id, 1, v);
+        updateCornerControllers();
+        this.persist();
+      });
       f.add(flipBindings, rotKey, rotationOptions).name('Rotation (90°)').onChange((v: number) => {
         store.setScreenRotation(id, v);
         updateCornerControllers();
@@ -556,28 +623,31 @@ export class CalibrationHUD {
       });
     };
 
-    addFlipPair(0, 'CRT [01] · Top-Left', 'crt1Rot', 'crt1Fine', 'crt1H', 'crt1V');
-    addFlipPair(1, 'CRT [02] · Top-Right', 'crt2Rot', 'crt2Fine', 'crt2H', 'crt2V');
-    addFlipPair(2, 'CRT [03] · Mid-Left', 'crt3Rot', 'crt3Fine', 'crt3H', 'crt3V');
-    addFlipPair(3, 'CRT [04] · Mid-Right', 'crt4Rot', 'crt4Fine', 'crt4H', 'crt4V');
-    addFlipPair(4, 'CRT [05] · Bot-Left', 'crt5Rot', 'crt5Fine', 'crt5H', 'crt5V');
-    addFlipPair(5, 'CRT [06] · Bot-Right', 'crt6Rot', 'crt6Fine', 'crt6H', 'crt6V');
+    addFlipPair(0, 'CRT [01] · Top-Left', 'crt1OffX', 'crt1OffY', 'crt1Rot', 'crt1Fine', 'crt1H', 'crt1V');
+    addFlipPair(1, 'CRT [02] · Top-Right', 'crt2OffX', 'crt2OffY', 'crt2Rot', 'crt2Fine', 'crt2H', 'crt2V');
+    addFlipPair(2, 'CRT [03] · Mid-Left', 'crt3OffX', 'crt3OffY', 'crt3Rot', 'crt3Fine', 'crt3H', 'crt3V');
+    addFlipPair(3, 'CRT [04] · Mid-Right', 'crt4OffX', 'crt4OffY', 'crt4Rot', 'crt4Fine', 'crt4H', 'crt4V');
+    addFlipPair(4, 'CRT [05] · Bot-Left', 'crt5OffX', 'crt5OffY', 'crt5Rot', 'crt5Fine', 'crt5H', 'crt5V');
+    addFlipPair(5, 'CRT [06] · Bot-Right', 'crt6OffX', 'crt6OffY', 'crt6Rot', 'crt6Fine', 'crt6H', 'crt6V');
 
     flipFolder.add({
       resetFlips: () => {
         store.resetAllFlips();
+        store.resetAllOffsets();
         sh.globalFlipH = false;
         sh.globalFlipV = false;
         sh.globalRotation = 0;
         sh.globalFineRotation = 0;
+        sh.globalOffsetX = 0;
+        sh.globalOffsetY = 0;
         Object.keys(flipBindings).forEach((k) => {
-          (flipBindings as any)[k] = k.endsWith('Rot') || k.endsWith('Fine') ? 0 : false;
+          (flipBindings as any)[k] = k.endsWith('Rot') || k.endsWith('Fine') || k.endsWith('OffX') || k.endsWith('OffY') ? 0 : false;
         });
         updateCornerControllers();
         gui.controllersRecursive().forEach((c) => c.updateDisplay());
         this.persist();
       },
-    }, 'resetFlips').name('Reset all orientations, rotations & flips');
+    }, 'resetFlips').name('Reset all transforms, orientations & offsets');
 
     const display = gui.addFolder('Display');
 
@@ -686,6 +756,20 @@ export class CalibrationHUD {
       .add(distReadout, 'liveDistance')
       .name('Est. Distance')
       .disable();
+
+    const peopleReadout = { livePeople: `${store.tracking.personCount} detected` };
+    const peopleCtrl = tracking
+      .add(peopleReadout, 'livePeople')
+      .name('People In View')
+      .disable();
+
+    tracking
+      .add(store.tracking, 'maxNumPoses', [1, 2, 3, 4, 6])
+      .name('Max Detectable People')
+      .onChange((v: any) => {
+        store.patchTracking({ maxNumPoses: Number(v) });
+        this.persist();
+      });
 
     tracking
       .add(store.tracking, 'distanceScale', 1.0, 25.0, 0.5)
@@ -1004,6 +1088,9 @@ export class CalibrationHUD {
       distReadout.liveDistance = `${state.tracking.distance.toFixed(2)} m`;
       distCtrl.updateDisplay();
 
+      peopleReadout.livePeople = `${state.tracking.personCount || (state.tracking.present ? 1 : 0)} detected`;
+      peopleCtrl.updateDisplay();
+
       for (let i = 0; i < 6; i++) {
         const lockPct = Math.round(
           (state.shaders.screenSignalLocks?.[i] ?? state.shaders.signalLock ?? 0) * 100,
@@ -1123,68 +1210,108 @@ export class CalibrationHUD {
     this.persist();
   }
 
+  private applyCalibrationData(saved: SavedCalibration): void {
+    const store = useAppStore.getState();
+    if (saved.shaders) {
+      store.patchShaders(saved.shaders);
+      if (this.shaderBindings) {
+        Object.assign(this.shaderBindings, store.shaders);
+      }
+    }
+    if (saved.tracking) {
+      store.patchTracking(saved.tracking);
+    }
+    if (saved.videoMode) {
+      store.setVideoMode(saved.videoMode);
+      localStorage.setItem('vfeed-video-mode', saved.videoMode);
+    }
+    if (saved.skeleton) {
+      store.setSkeletonOverlay(saved.skeleton.enabled);
+      if (saved.skeleton.style) {
+        store.setSkeletonStyle(saved.skeleton.style as any);
+      }
+      if (saved.skeleton.lineThickness !== undefined) {
+        store.setSkeletonLineThickness(saved.skeleton.lineThickness);
+      } else if (saved.skeleton.thickness !== undefined) {
+        store.setSkeletonThickness(saved.skeleton.thickness);
+      }
+      if (saved.skeleton.lineOpacity !== undefined) {
+        store.setSkeletonLineOpacity(saved.skeleton.lineOpacity);
+      }
+      if (saved.skeleton.dotSize !== undefined) {
+        store.setSkeletonDotSize(saved.skeleton.dotSize);
+      }
+      if (saved.skeleton.dotOpacity !== undefined) {
+        store.setSkeletonDotOpacity(saved.skeleton.dotOpacity);
+      }
+      if (saved.skeleton.showLines !== undefined) {
+        store.setSkeletonShowLines(saved.skeleton.showLines);
+      }
+      if (saved.skeleton.showDots !== undefined) {
+        store.setSkeletonShowDots(saved.skeleton.showDots);
+      }
+      if (saved.skeleton.jitter !== undefined) {
+        store.setSkeletonJitter(saved.skeleton.jitter);
+      }
+    }
+    if (saved.frames) {
+      store.setFrames(saved.frames);
+    }
+    if (saved.audio) {
+      store.setAudioState(saved.audio);
+    }
+    this.curvatureCtrl?.enable(store.shaders.tubeCurve);
+    this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+  }
+
   private loadSaved(): void {
+    // 1. Synchronously load from localStorage for zero initial flash
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as SavedCalibration;
-      const store = useAppStore.getState();
-      if (saved.shaders) {
-        store.patchShaders(saved.shaders);
-      }
-      if (saved.tracking) {
-        store.patchTracking(saved.tracking);
-      }
-      if (saved.videoMode) {
-        store.setVideoMode(saved.videoMode);
-        localStorage.setItem('vfeed-video-mode', saved.videoMode);
-      }
-      if (saved.skeleton) {
-        store.setSkeletonOverlay(saved.skeleton.enabled);
-        if (saved.skeleton.style) {
-          store.setSkeletonStyle(saved.skeleton.style as any);
-        }
-        if (saved.skeleton.lineThickness !== undefined) {
-          store.setSkeletonLineThickness(saved.skeleton.lineThickness);
-        } else if (saved.skeleton.thickness !== undefined) {
-          store.setSkeletonThickness(saved.skeleton.thickness);
-        }
-        if (saved.skeleton.lineOpacity !== undefined) {
-          store.setSkeletonLineOpacity(saved.skeleton.lineOpacity);
-        }
-        if (saved.skeleton.dotSize !== undefined) {
-          store.setSkeletonDotSize(saved.skeleton.dotSize);
-        }
-        if (saved.skeleton.dotOpacity !== undefined) {
-          store.setSkeletonDotOpacity(saved.skeleton.dotOpacity);
-        }
-        if (saved.skeleton.showLines !== undefined) {
-          store.setSkeletonShowLines(saved.skeleton.showLines);
-        }
-        if (saved.skeleton.showDots !== undefined) {
-          store.setSkeletonShowDots(saved.skeleton.showDots);
-        }
-        if (saved.skeleton.jitter !== undefined) {
-          store.setSkeletonJitter(saved.skeleton.jitter);
-        }
-      }
-      if (saved.frames) {
-        store.setFrames(saved.frames);
-      }
-      if (saved.audio) {
-        store.setAudioState(saved.audio);
+      if (raw) {
+        const saved = JSON.parse(raw) as SavedCalibration;
+        this.applyCalibrationData(saved);
       }
     } catch {
       /* ignore corrupt saves */
     }
+
+    // 2. Asynchronously query backend server for disk-persisted calibration (config/calibration.json or public/calibration.json)
+    fetch('/api/calibration')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.ok && data.calibration) {
+          this.applyCalibrationData(data.calibration as SavedCalibration);
+        } else {
+          // Check static fallback
+          fetch('/calibration.json')
+            .then((r) => (r.ok ? r.json() : null))
+            .then((staticData) => {
+              if (staticData) {
+                this.applyCalibrationData(staticData as SavedCalibration);
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {
+        fetch('/calibration.json')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((staticData) => {
+            if (staticData) {
+              this.applyCalibrationData(staticData as SavedCalibration);
+            }
+          })
+          .catch(() => {});
+      });
   }
 
-  private persist(): void {
+  private getCalibrationPayload(): SavedCalibration {
     const state = useAppStore.getState();
     const { time, rippleStrength, ...shaders } = state.shaders;
     void time;
     void rippleStrength;
-    const payload: SavedCalibration = {
+    return {
       shaders,
       tracking: {
         confidenceThreshold: state.tracking.confidenceThreshold,
@@ -1193,6 +1320,7 @@ export class CalibrationHUD {
         distanceOffset: state.tracking.distanceOffset,
         minDistance: state.tracking.minDistance,
         maxDistance: state.tracking.maxDistance,
+        maxNumPoses: state.tracking.maxNumPoses,
         antennaLocalWeight: state.tracking.antennaLocalWeight,
         antennaHandBoost: state.tracking.antennaHandBoost,
         antennaSmoothing: state.tracking.antennaSmoothing,
@@ -1214,7 +1342,120 @@ export class CalibrationHUD {
       frames: state.frames,
       audio: state.audio,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }
+
+  private persist(): void {
+    const payload = this.getCalibrationPayload();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      /* ignore storage quota errors */
+    }
+  }
+
+  private async saveToBrowserAndServer(): Promise<void> {
+    this.persist();
+    const payload = this.getCalibrationPayload();
+    try {
+      const res = await fetch('/api/calibration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.ok) {
+          this.showToast('✓ Saved to Browser & Disk (config/calibration.json)');
+          return;
+        }
+      }
+      this.showToast('✓ Saved to Browser localStorage');
+    } catch (err) {
+      console.warn('[v-feed] Server save note:', err);
+      this.showToast('✓ Saved to Browser localStorage');
+    }
+  }
+
+  private exportCalibrationJson(): void {
+    const payload = this.getCalibrationPayload();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vfeed-calibration-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    this.showToast('📥 Downloaded vfeed-calibration.json');
+  }
+
+  private importCalibrationJson(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text) as SavedCalibration;
+        this.applyCalibrationData(data);
+        await this.saveToBrowserAndServer();
+        this.showToast('✓ Imported & Saved calibration successfully');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.showToast(`✗ Failed to import: ${msg}`);
+      }
+    };
+    input.click();
+  }
+
+  private async copyToClipboard(): Promise<void> {
+    const payload = this.getCalibrationPayload();
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      this.showToast('📋 Copied JSON to clipboard');
+    } catch {
+      this.showToast('✗ Failed to copy to clipboard');
+    }
+  }
+
+  private showToast(message: string, duration = 3000): void {
+    let toast = document.getElementById('vfeed-hud-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'vfeed-hud-toast';
+      toast.style.cssText = [
+        'position: fixed',
+        'top: 24px',
+        'left: 50%',
+        'transform: translateX(-50%)',
+        'background: #121722f0',
+        'color: #3ddc97',
+        'border: 1px solid rgba(61, 220, 151, 0.6)',
+        'padding: 10px 20px',
+        'border-radius: 6px',
+        'font-family: ui-monospace, Menlo, Monaco, monospace',
+        'font-size: 13px',
+        'font-weight: 600',
+        'letter-spacing: 0.04em',
+        'z-index: 9999999',
+        'pointer-events: none',
+        'box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 16px rgba(61, 220, 151, 0.3)',
+        'transition: opacity 0.3s ease, transform 0.3s ease',
+      ].join(';');
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    setTimeout(() => {
+      if (toast) {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(-50%) translateY(-10px)';
+      }
+    }, duration);
   }
 
   private show(): void {

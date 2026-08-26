@@ -216,32 +216,19 @@ void main() {
   float row = 2.0 - float(matchedScreen / 2); // 2 (Top), 1 (Mid), 0 (Bot)
   float screenIndex = float(matchedScreen);
 
-  // Apply Per-Piece and Global Rotation, Flips, and Antenna RF Parameters
+  // Apply Per-Piece and Global Flips, and Antenna RF Parameters
   vec2 flip = vec2(0.0);
-  float screenRot = 0.0;
   float screenNoiseGain = uNoiseGain;
   float screenSignalLock = uSignalLock;
   for (int s = 0; s < 6; s++) {
     if (s == matchedScreen) {
       flip = uScreenFlips[s];
-      screenRot = uScreenRotations[s];
       screenNoiseGain = uScreenNoiseGain[s];
       screenSignalLock = uScreenSignalLock[s];
     }
   }
 
-  float totalRot = screenRot + uGlobalRotation;
   vec2 effLocalUv = localUv;
-
-  if (abs(totalRot) > 0.0001) {
-    float cosR = cos(totalRot);
-    float sinR = sin(totalRot);
-    vec2 p = effLocalUv - 0.5;
-    effLocalUv = vec2(
-      p.x * cosR - p.y * sinR,
-      p.x * sinR + p.y * cosR
-    ) + 0.5;
-  }
 
   bool doFlipH = (flip.x > 0.5) != (uGlobalFlipH > 0.5);
   bool doFlipV = (flip.y > 0.5) != (uGlobalFlipV > 0.5);

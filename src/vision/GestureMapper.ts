@@ -115,46 +115,52 @@ export class GestureMapper {
       { minX: 0.5, maxX: 1.0, minY: 2 / 3, maxY: 1.0 }, // CRT 06 [Bot-R]
     ];
 
-    // Collect all active landmark dots with their coordinates and weights
+    // Collect all active landmark dots with their coordinates and weights from ALL people
     const dots: Array<{ x: number; y: number; weight: number }> = [];
 
-    // 1. Hand landmark dots (21 dots per hand - high capacitive antenna conductor)
-    if (frame.leftHand && frame.leftHand.length > 0) {
-      for (const pt of frame.leftHand) {
-        if (pt) dots.push({ x: pt.x, y: pt.y, weight: 0.10 * handBoost });
+    // 1. Hand landmark dots (from all detected hands across all people)
+    const handList =
+      frame.allHands && frame.allHands.length > 0
+        ? frame.allHands.map((h) => h.landmarks)
+        : [frame.leftHand, frame.rightHand];
+
+    for (const handLms of handList) {
+      if (handLms && handLms.length > 0) {
+        for (const pt of handLms) {
+          if (pt) dots.push({ x: pt.x, y: pt.y, weight: 0.10 * handBoost });
+        }
       }
-    } else if (leftHand.active) {
-      dots.push({ x: leftHand.x, y: leftHand.y, weight: 0.65 * handBoost });
     }
 
-    if (frame.rightHand && frame.rightHand.length > 0) {
-      for (const pt of frame.rightHand) {
-        if (pt) dots.push({ x: pt.x, y: pt.y, weight: 0.10 * handBoost });
-      }
-    } else if (rightHand.active) {
-      dots.push({ x: rightHand.x, y: rightHand.y, weight: 0.65 * handBoost });
-    }
+    // 2. Pose landmark dots (from all detected people)
+    const poseList =
+      frame.poses && frame.poses.length > 0
+        ? frame.poses
+        : frame.landmarks && frame.landmarks.length > 0
+          ? [frame.landmarks]
+          : [];
 
-    // 2. Pose landmark dots (33 body landmarks)
-    for (let idx = 0; idx < lm.length; idx++) {
-      const pt = lm[idx];
-      if (!pt || (pt.visibility ?? 1) < threshold) continue;
+    for (const personLm of poseList) {
+      for (let idx = 0; idx < personLm.length; idx++) {
+        const pt = personLm[idx];
+        if (!pt || (pt.visibility ?? 1) < threshold) continue;
 
-      let w = 0.15;
-      if (idx <= 10) {
-        // Head / Face landmarks
-        w = 0.12;
-      } else if (idx === 11 || idx === 12 || idx === 23 || idx === 24) {
-        // Shoulders and Hips
-        w = 0.35;
-      } else if (idx === 13 || idx === 14 || idx === 15 || idx === 16) {
-        // Elbows and Wrists
-        w = 0.25;
-      } else {
-        // Legs / Feet
-        w = 0.18;
+        let w = 0.15;
+        if (idx <= 10) {
+          // Head / Face landmarks
+          w = 0.12;
+        } else if (idx === 11 || idx === 12 || idx === 23 || idx === 24) {
+          // Shoulders and Hips
+          w = 0.35;
+        } else if (idx === 13 || idx === 14 || idx === 15 || idx === 16) {
+          // Elbows and Wrists
+          w = 0.25;
+        } else {
+          // Legs / Feet
+          w = 0.18;
+        }
+        dots.push({ x: pt.x, y: pt.y, weight: w });
       }
-      dots.push({ x: pt.x, y: pt.y, weight: w });
     }
 
     const nextPresences: number[] = [];
@@ -220,6 +226,7 @@ export class GestureMapper {
     const rippleStrength = handActive ? 0.35 + velNorm * 0.65 : 0;
 
     store.patchTracking({
+      personCount: poseList.length,
       distance: this.smoothedDistance,
       velocity: this.smoothedVelocity,
       torsoArea,

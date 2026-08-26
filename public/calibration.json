@@ -1,0 +1,317 @@
+{
+  "shaders": {
+    "matrixSplit": true,
+    "bezelWidthX": 0.024,
+    "bezelWidthY": 0.024,
+    "bezelOuter": 0.018,
+    "bezelComp": 0.65,
+    "cornerRounding": 0.08,
+    "bezelChassis": true,
+    "perScreenVariance": 0.35,
+    "globalFlipH": false,
+    "globalFlipV": false,
+    "globalRotation": 0,
+    "globalFineRotation": 0,
+    "globalOffsetX": 0,
+    "globalOffsetY": 0,
+    "screenFlips": [
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      },
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      },
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      },
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      },
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      },
+      {
+        "flipH": false,
+        "flipV": false,
+        "rotation": 0,
+        "fineRotation": 0
+      }
+    ],
+    "screenOffsets": [
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ],
+    "cornerOffsets": [
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      },
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      },
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      },
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      },
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      },
+      {
+        "tl": [
+          0,
+          0
+        ],
+        "tr": [
+          0,
+          0
+        ],
+        "br": [
+          0,
+          0
+        ],
+        "bl": [
+          0,
+          0
+        ]
+      }
+    ],
+    "showCornerHandles": false,
+    "tubeCurve": true,
+    "curvature": 0.18,
+    "scanlineIntensity": 0.45,
+    "phosphorMask": 0.3,
+    "vignette": 0.4,
+    "rgbSplit": 1.4,
+    "vHold": 0.10479301441366788,
+    "hJitter": 0.9,
+    "noiseGain": 0.3274322681060604,
+    "signalLock": 0.7005913873895203,
+    "screenNoiseGains": [
+      0.460750430342155,
+      0.460750430342155,
+      0.41568151397526926,
+      0.04000036598367579,
+      0.321179773713092,
+      0.2662310942800154
+    ],
+    "screenSignalLocks": [
+      0.5617183017269219,
+      0.5617183017269219,
+      0.6086650896090946,
+      0.9999996187670045,
+      0.707104402382196,
+      0.764342610124984
+    ]
+  },
+  "tracking": {
+    "confidenceThreshold": 0.5,
+    "mirrorCamera": true,
+    "distanceScale": 8.5,
+    "distanceOffset": 2.8,
+    "minDistance": 1,
+    "maxDistance": 3,
+    "maxNumPoses": 4,
+    "antennaLocalWeight": 0.25,
+    "antennaHandBoost": 1.9,
+    "antennaSmoothing": 0.21,
+    "antennaFalloffRadius": 0.8
+  },
+  "videoMode": "live",
+  "skeleton": {
+    "enabled": true,
+    "style": "phosphor",
+    "thickness": 2,
+    "lineThickness": 2,
+    "lineOpacity": 0.85,
+    "dotSize": 5,
+    "dotOpacity": 0.3,
+    "showLines": false,
+    "showDots": true,
+    "jitter": 0.65
+  },
+  "frames": {
+    "show": true,
+    "shapeStyle": "bracket-corners",
+    "followTubeCurvature": true,
+    "curvatureScale": 1,
+    "cornerRadius": 0.09,
+    "inset": 0.055,
+    "thickness": 2,
+    "opacity": 0.85,
+    "showLabels": true,
+    "showCrosshairs": true,
+    "showCornerBrackets": true,
+    "rotation": 0,
+    "offsetX": -0.00600000000000001,
+    "offsetY": 0,
+    "screenTransforms": [
+      {
+        "offsetX": -0.013,
+        "offsetY": 0.004,
+        "rotation": -0.5
+      },
+      {
+        "offsetX": 0,
+        "offsetY": 0,
+        "rotation": 0
+      },
+      {
+        "offsetX": 0,
+        "offsetY": 0,
+        "rotation": 0
+      },
+      {
+        "offsetX": 0,
+        "offsetY": 0,
+        "rotation": 0
+      },
+      {
+        "offsetX": 0,
+        "offsetY": 0,
+        "rotation": 0
+      },
+      {
+        "offsetX": 0,
+        "offsetY": 0,
+        "rotation": 0
+      }
+    ],
+    "customLabels": [
+      "CRT [01]",
+      "CRT [02]",
+      "CRT [03]",
+      "CRT [04]",
+      "CRT [05]",
+      "CRT [06]"
+    ],
+    "customSubtitles": [
+      "TOP-LEFT",
+      "TOP-RIGHT",
+      "MID-LEFT",
+      "MID-RIGHT",
+      "BOT-LEFT",
+      "BOT-RIGHT"
+    ]
+  },
+  "audio": {
+    "masterVolume": 0.8,
+    "videoVolume": 0.9,
+    "noiseVolume": 0.35,
+    "humVolume": 0.02,
+    "antennaModulation": true,
+    "muted": false
+  }
+}

@@ -112,9 +112,30 @@ export function createDefaultScreenFlips(): ScreenFlipState[] {
   }));
 }
 
+export function createDefaultScreenOffsets(): Array<[number, number]> {
+  return Array.from({ length: TOTAL_SCREENS }, () => [0, 0]);
+}
+
+function rotatePointUV(
+  p: THREE.Vector2,
+  origin: THREE.Vector2,
+  rad: number,
+): THREE.Vector2 {
+  if (Math.abs(rad) < 1e-6) return p;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const rx = p.x - origin.x;
+  const ry = p.y - origin.y;
+  return new THREE.Vector2(
+    origin.x + rx * cos - ry * sin,
+    origin.y + rx * sin + ry * cos,
+  );
+}
+
 /**
  * Computes all 24 corner coordinates (4 corners x 6 screens) in WebGL UV space [0, 1]^2,
- * applying bezel geometry and user corner pin offsets for each screen.
+ * applying bezel geometry, corner pin offsets, per-screen offsets & rotations,
+ * and global offsets & rotations for each screen.
  * Point order per screen: [BL, BR, TR, TL]
  */
 export function computeAllScreenCorners(
@@ -122,11 +143,21 @@ export function computeAllScreenCorners(
   bezelWidthY: number,
   bezelOuter: number,
   offsets: ScreenCornerOffsets[],
+  screenOffsets?: Array<[number, number]>,
+  screenFlips?: ScreenFlipState[],
+  globalRotation = 0,
+  globalFineRotation = 0,
+  globalOffsetX = 0,
+  globalOffsetY = 0,
 ): THREE.Vector2[] {
   const bx = bezelWidthX * 0.5;
   const by = bezelWidthY * 0.5;
   const mox = bezelOuter;
   const moy = bezelOuter;
+
+  const totalGlobalRotRad =
+    ((globalRotation || 0) + (globalFineRotation || 0)) * (Math.PI / 180.0);
+  const globalOrigin = new THREE.Vector2(0.5, 0.5);
 
   const corners: THREE.Vector2[] = [];
 
@@ -140,15 +171,76 @@ export function computeAllScreenCorners(
     const yMax = row === 0 ? 1 / 3 - by : (row === 1 ? 2 / 3 - by : 1.0 - moy);
 
     const off = offsets[i] ?? { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] };
+    const sOff = screenOffsets?.[i] ?? [0, 0];
+    const sFlip = screenFlips?.[i] ?? {
+      flipH: false,
+      flipV: false,
+      rotation: 0,
+      fineRotation: 0,
+    };
+    const sRotRad =
+      ((sFlip.rotation || 0) + (sFlip.fineRotation || 0)) * (Math.PI / 180.0);
+
+    // Initial 4 corner points with corner pin offsets
+    let pBL = new THREE.Vector2(xMin + off.bl[0], yMin + off.bl[1]);
+    let pBR = new THREE.Vector2(xMax + off.br[0], yMin + off.br[1]);
+    let pTR = new THREE.Vector2(xMax + off.tr[0], yMax + off.tr[1]);
+    let pTL = new THREE.Vector2(xMin + off.tl[0], yMax + off.tl[1]);
+
+    // Screen center in UV space
+    const sCenter = new THREE.Vector2(
+      (pBL.x + pBR.x + pTR.x + pTL.x) * 0.25,
+      (pBL.y + pBR.y + pTR.y + pTL.y) * 0.25,
+    );
+
+    // 1. Per-screen rotation around screen center
+    if (Math.abs(sRotRad) > 1e-6) {
+      pBL = rotatePointUV(pBL, sCenter, sRotRad);
+      pBR = rotatePointUV(pBR, sCenter, sRotRad);
+      pTR = rotatePointUV(pTR, sCenter, sRotRad);
+      pTL = rotatePointUV(pTL, sCenter, sRotRad);
+    }
+
+    // 2. Per-screen offset
+    if (sOff[0] !== 0 || sOff[1] !== 0) {
+      pBL.x += sOff[0];
+      pBL.y += sOff[1];
+      pBR.x += sOff[0];
+      pBR.y += sOff[1];
+      pTR.x += sOff[0];
+      pTR.y += sOff[1];
+      pTL.x += sOff[0];
+      pTL.y += sOff[1];
+    }
+
+    // 3. Global rotation around canvas center (0.5, 0.5)
+    if (Math.abs(totalGlobalRotRad) > 1e-6) {
+      pBL = rotatePointUV(pBL, globalOrigin, totalGlobalRotRad);
+      pBR = rotatePointUV(pBR, globalOrigin, totalGlobalRotRad);
+      pTR = rotatePointUV(pTR, globalOrigin, totalGlobalRotRad);
+      pTL = rotatePointUV(pTL, globalOrigin, totalGlobalRotRad);
+    }
+
+    // 4. Global offset
+    if (globalOffsetX !== 0 || globalOffsetY !== 0) {
+      pBL.x += globalOffsetX;
+      pBL.y += globalOffsetY;
+      pBR.x += globalOffsetX;
+      pBR.y += globalOffsetY;
+      pTR.x += globalOffsetX;
+      pTR.y += globalOffsetY;
+      pTL.x += globalOffsetX;
+      pTL.y += globalOffsetY;
+    }
 
     // Point 0: Bottom-Left (BL)
-    corners.push(new THREE.Vector2(xMin + off.bl[0], yMin + off.bl[1]));
+    corners.push(pBL);
     // Point 1: Bottom-Right (BR)
-    corners.push(new THREE.Vector2(xMax + off.br[0], yMin + off.br[1]));
+    corners.push(pBR);
     // Point 2: Top-Right (TR)
-    corners.push(new THREE.Vector2(xMax + off.tr[0], yMax + off.tr[1]));
+    corners.push(pTR);
     // Point 3: Top-Left (TL)
-    corners.push(new THREE.Vector2(xMin + off.tl[0], yMax + off.tl[1]));
+    corners.push(pTL);
   }
 
   return corners;

@@ -5,11 +5,19 @@ import {
   type NormalizedLandmark,
 } from '@mediapipe/tasks-vision';
 
+export interface HandDetection {
+  landmarks: NormalizedLandmark[];
+  handedness: 'Left' | 'Right' | string;
+}
+
 export interface TrackerFrame {
   present: boolean;
+  personCount: number;
   landmarks: NormalizedLandmark[] | null;
+  poses: NormalizedLandmark[][];
   leftHand: NormalizedLandmark[] | null;
   rightHand: NormalizedLandmark[] | null;
+  allHands: HandDetection[];
   timestampMs: number;
 }
 
@@ -18,8 +26,10 @@ export class MediaPipeTracker {
   private hands: HandLandmarker | null = null;
   private ready = false;
   private lastVideoTime = -1;
+  private currentMaxPoses = 4;
 
-  async init(): Promise<void> {
+  async init(maxPoses = 4): Promise<void> {
+    this.currentMaxPoses = maxPoses;
     const vision = await FilesetResolver.forVisionTasks(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm',
     );
@@ -31,7 +41,7 @@ export class MediaPipeTracker {
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      numPoses: 1,
+      numPoses: maxPoses,
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -44,7 +54,7 @@ export class MediaPipeTracker {
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      numHands: 2,
+      numHands: Math.min(Math.max(maxPoses * 2, 2), 8),
       minHandDetectionConfidence: 0.5,
       minHandPresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
@@ -53,12 +63,27 @@ export class MediaPipeTracker {
     this.ready = true;
   }
 
+  async setMaxNumPoses(numPoses: number): Promise<void> {
+    if (this.currentMaxPoses === numPoses) return;
+    this.currentMaxPoses = numPoses;
+    if (!this.pose || !this.hands) return;
+    try {
+      await this.pose.setOptions({ numPoses });
+      await this.hands.setOptions({ numHands: Math.min(Math.max(numPoses * 2, 2), 8) });
+    } catch (err) {
+      console.warn('[v-feed] Failed to update maxNumPoses:', err);
+    }
+  }
+
   detect(video: HTMLVideoElement, mirror: boolean): TrackerFrame {
     const empty: TrackerFrame = {
       present: false,
+      personCount: 0,
       landmarks: null,
+      poses: [],
       leftHand: null,
       rightHand: null,
+      allHands: [],
       timestampMs: performance.now(),
     };
 
@@ -72,11 +97,14 @@ export class MediaPipeTracker {
     const poseResult = this.pose.detectForVideo(video, now);
     const handResult = this.hands.detectForVideo(video, now);
 
-    const pose =
-      poseResult.landmarks && poseResult.landmarks.length > 0
-        ? poseResult.landmarks[0]
-        : null;
+    const poses: NormalizedLandmark[][] = [];
+    if (poseResult.landmarks && poseResult.landmarks.length > 0) {
+      for (const p of poseResult.landmarks) {
+        poses.push(p.map((pt) => (mirror ? { ...pt, x: 1 - pt.x } : { ...pt })));
+      }
+    }
 
+    const allHands: HandDetection[] = [];
     let leftHand: NormalizedLandmark[] | null = null;
     let rightHand: NormalizedLandmark[] | null = null;
 
@@ -86,20 +114,22 @@ export class MediaPipeTracker {
         const lm = handResult.landmarks[i].map((p) =>
           mirror ? { ...p, x: 1 - p.x } : { ...p },
         );
-        if (label === 'Left') leftHand = lm;
-        else if (label === 'Right') rightHand = lm;
+        allHands.push({ landmarks: lm, handedness: label });
+        if (label === 'Left' && !leftHand) leftHand = lm;
+        else if (label === 'Right' && !rightHand) rightHand = lm;
       }
     }
 
-    const landmarks = pose
-      ? pose.map((p) => (mirror ? { ...p, x: 1 - p.x } : { ...p }))
-      : null;
+    const landmarks = poses.length > 0 ? poses[0] : null;
 
     return {
-      present: landmarks !== null,
+      present: poses.length > 0,
+      personCount: poses.length,
       landmarks,
+      poses,
       leftHand,
       rightHand,
+      allHands,
       timestampMs: now,
     };
   }

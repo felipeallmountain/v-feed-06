@@ -101,6 +101,9 @@ export class App {
       if (state.tracking.mirrorCamera !== prev.tracking.mirrorCamera) {
         this.camera?.setMirror(state.tracking.mirrorCamera);
       }
+      if (state.tracking.maxNumPoses !== prev.tracking.maxNumPoses) {
+        void this.tracker?.setMaxNumPoses(state.tracking.maxNumPoses);
+      }
     });
 
     this.running = true;
@@ -214,7 +217,8 @@ export class App {
     }
 
     try {
-      await this.tracker?.init();
+      const maxPoses = useAppStore.getState().tracking.maxNumPoses || 4;
+      await this.tracker?.init(maxPoses);
       this.trackerReady = true;
     } catch (err) {
       console.warn('[v-feed] MediaPipe init failed:', err);

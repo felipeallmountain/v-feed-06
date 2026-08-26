@@ -181,6 +181,12 @@ export class SceneManager {
       sh.bezelWidthY,
       sh.bezelOuter,
       sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
     );
     (window as any).__vfeed_last_corners = updatedCorners;
     const cornerUniform = this.material.uniforms.uCorners.value as THREE.Vector2[];

@@ -323,6 +323,12 @@ export class SkeletonOverlay {
       sh.bezelWidthY,
       sh.bezelOuter,
       sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
     );
 
     this.ctx.save();
@@ -474,19 +480,28 @@ export class SkeletonOverlay {
         this.ctx.font = `bold ${fontSize}px monospace`;
 
         const textPos = this.getCurvedQuadPoint(0.04, 0.04, quad, inset, effectiveCurvature);
-        const textX = textPos.x;
-        const textY = textPos.y + fontSize;
 
-        // Background pill badge for high contrast
+        // Compute angle along the top edge of the quad
+        const edgeDx = quad.tr.x - quad.tl.x;
+        const edgeDy = quad.tr.y - quad.tl.y;
+        const textAngle = Math.atan2(edgeDy, edgeDx);
+
         const fullText = sub && sub.trim().length > 0 ? `${tag} · ${sub}` : tag;
         const textWidth = this.ctx.measureText(fullText).width;
+
+        this.ctx.save();
+        this.ctx.translate(textPos.x, textPos.y);
+        this.ctx.rotate(textAngle);
+
+        // Background pill badge for high contrast
         this.ctx.save();
         this.ctx.globalAlpha = Math.min(frames.opacity * 0.85, 0.9);
         this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
-        this.ctx.fillRect(textX - 4, textY - fontSize - 2, textWidth + 8, fontSize + 6);
+        this.ctx.fillRect(-4, -2, textWidth + 8, fontSize + 6);
         this.ctx.restore();
 
-        this.ctx.fillText(fullText, textX, textY);
+        this.ctx.fillText(fullText, 0, fontSize);
+        this.ctx.restore();
       }
     }
 
@@ -532,15 +547,23 @@ export class SkeletonOverlay {
     this.ctx.shadowBlur = 12;
     this.ctx.shadowColor = palette.glow;
 
-    // Draw Body Pose Skeleton
-    if (frame.landmarks && frame.landmarks.length > 0) {
-      const lm = frame.landmarks;
+    // Draw Body Pose Skeletons (Multiple Persons)
+    const poses =
+      frame.poses && frame.poses.length > 0
+        ? frame.poses
+        : frame.landmarks && frame.landmarks.length > 0
+          ? [frame.landmarks]
+          : [];
+
+    let personSeed = 0;
+    for (const lm of poses) {
+      personSeed += 100;
       const jitteredLms = lm.map((p, idx) => {
         const rawX = p.x * w;
         const rawY = p.y * h;
         return {
           ...p,
-          pt: this.getJitteredPoint(rawX, rawY, idx, skeletonJitter, w),
+          pt: this.getJitteredPoint(rawX, rawY, personSeed + idx, skeletonJitter, w),
         };
       });
 
@@ -602,9 +625,13 @@ export class SkeletonOverlay {
       }
     }
 
-    // Draw Hand Skeletons
-    const hands = [frame.leftHand, frame.rightHand];
-    let handIdx = 100;
+    // Draw Hand Skeletons (All detected hands across all people)
+    const hands =
+      frame.allHands && frame.allHands.length > 0
+        ? frame.allHands.map((h) => h.landmarks)
+        : [frame.leftHand, frame.rightHand];
+
+    let handIdx = 1000;
     for (const handLms of hands) {
       handIdx += 50;
       if (!handLms || handLms.length === 0) continue;
