@@ -7,6 +7,13 @@ import {
   type ScreenCornerOffsets,
   type ScreenFlipState,
 } from '../rendering/MatrixSplitter';
+import type {
+  AudienceDensity,
+  ClothingChroma,
+  KineticState,
+  SemanticPose,
+  SpatialProximity,
+} from '../vision/BroadcastQuerySynthesizer';
 
 export type VideoMode = 'live' | 'cache' | 'grid';
 
@@ -15,6 +22,26 @@ export interface HandPoint {
   y: number;
   z: number;
   active: boolean;
+}
+
+export interface InteractionState {
+  enabled: boolean;
+  activePose: SemanticPose;
+  densityState: AudienceDensity;
+  kineticState: KineticState;
+  proximityState: SpatialProximity;
+  chromaState: ClothingChroma;
+  kineticEnergy: number; // 0..1
+  candidateState: string | null;
+  holdProgress: number; // 0..1
+  isHolding: boolean;
+  holdDurationMs: number; // default 1800ms
+  cooldownRemainingSec: number; // 0 when ready
+  cooldownDurationSec: number; // default 10s
+  lastQuery: string | null;
+  lastCategory: string | null;
+  lastTriggerReason: string | null;
+  stillnessDurationSec: number;
 }
 
 export interface ShaderUniformsState {
@@ -169,6 +196,7 @@ export interface AppState {
   videoMode: VideoMode;
   currentVideoUrl: string | null;
   tracking: TrackingState;
+  interaction: InteractionState;
   shaders: ShaderUniformsState;
   setFps: (fps: number) => void;
   setHudVisible: (visible: boolean) => void;
@@ -204,6 +232,8 @@ export interface AppState {
   setVideoMode: (mode: VideoMode) => void;
   setCurrentVideoUrl: (url: string | null) => void;
   patchTracking: (partial: Partial<TrackingState>) => void;
+  patchInteraction: (partial: Partial<InteractionState>) => void;
+  setInteractionEnabled: (enabled: boolean) => void;
   patchShaders: (partial: Partial<ShaderUniformsState>) => void;
   setCornerOffset: (
     screenIndex: number,
@@ -228,6 +258,26 @@ export interface AppState {
 }
 
 const idleHand = (): HandPoint => ({ x: 0.5, y: 0.5, z: 0, active: false });
+
+export const DEFAULT_INTERACTION_STATE: InteractionState = {
+  enabled: true,
+  activePose: 'NONE',
+  densityState: 'EMPTY',
+  kineticState: 'STEADY',
+  proximityState: 'MEDIUM',
+  chromaState: 'NEUTRAL',
+  kineticEnergy: 0,
+  candidateState: null,
+  holdProgress: 0,
+  isHolding: false,
+  holdDurationMs: 1800,
+  cooldownRemainingSec: 0,
+  cooldownDurationSec: 10,
+  lastQuery: null,
+  lastCategory: null,
+  lastTriggerReason: null,
+  stillnessDurationSec: 0,
+};
 
 /** 6-Screen CRT Totem (Default — simulated 2x3 video wall with bezels & curved CRT tubes). */
 export const CRT_6X_TOTEM_PRESET: ShaderUniformsState = {
@@ -444,6 +494,7 @@ export const useAppStore = createStore<AppState>((set) => ({
     antennaSmoothing: 0.22,
     antennaFalloffRadius: 0.45,
   },
+  interaction: { ...DEFAULT_INTERACTION_STATE },
   shaders: { ...CRT_6X_TOTEM_PRESET },
   setFps: (fps) => set({ fps }),
   setHudVisible: (hudVisible) => set({ hudVisible }),
@@ -549,6 +600,10 @@ export const useAppStore = createStore<AppState>((set) => ({
   setCurrentVideoUrl: (currentVideoUrl) => set({ currentVideoUrl }),
   patchTracking: (partial) =>
     set((s) => ({ tracking: { ...s.tracking, ...partial } })),
+  patchInteraction: (partial) =>
+    set((s) => ({ interaction: { ...s.interaction, ...partial } })),
+  setInteractionEnabled: (enabled) =>
+    set((s) => ({ interaction: { ...s.interaction, enabled } })),
   patchShaders: (partial) =>
     set((s) => ({
       shaders: {

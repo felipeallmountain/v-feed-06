@@ -1,3 +1,10 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.resolve(__dirname, '..', '..', '.env');
+
 /**
  * YouTube Data API v3 Service
  * Fetches playlist items, searches vertical shorts, and retrieves video metadata.
@@ -26,15 +33,31 @@ export class YouTubeDataService {
   private readonly defaultCacheTtlMs = 15 * 60 * 1000; // 15 minutes
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.YOUTUBE_API_KEY || '';
+    this.apiKey = (apiKey || '').trim();
+  }
+
+  getApiKey(): string {
+    if (this.apiKey && this.apiKey.trim().length > 0) {
+      return this.apiKey.trim();
+    }
+    let key = (process.env.YOUTUBE_API_KEY || '').trim();
+    if (!key) {
+      try {
+        dotenv.config({ path: envPath, override: true });
+        key = (process.env.YOUTUBE_API_KEY || '').trim();
+      } catch {
+        /* ignore */
+      }
+    }
+    return key;
   }
 
   setApiKey(key: string): void {
-    this.apiKey = key;
+    this.apiKey = key.trim();
   }
 
   get isConfigured(): boolean {
-    return Boolean(this.apiKey && this.apiKey.trim().length > 0);
+    return this.getApiKey().length > 0;
   }
 
   private getCached<T>(key: string): T | null {
@@ -58,7 +81,8 @@ export class YouTubeDataService {
    * Search for vertical YouTube Shorts.
    */
   async searchShorts(query: string, maxResults = 10): Promise<YouTubeVideoMeta[]> {
-    if (!this.isConfigured) {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
       throw new Error('YouTube API key is not configured');
     }
 
@@ -72,7 +96,7 @@ export class YouTubeDataService {
     url.searchParams.set('type', 'video');
     url.searchParams.set('videoDuration', 'short');
     url.searchParams.set('maxResults', String(Math.min(50, Math.max(1, maxResults))));
-    url.searchParams.set('key', this.apiKey);
+    url.searchParams.set('key', apiKey);
 
     const response = await fetch(url);
     if (!response.ok) {
@@ -142,7 +166,8 @@ export class YouTubeDataService {
    * Fetch items from a YouTube playlist.
    */
   async fetchPlaylistItems(playlistId: string, maxResults = 25): Promise<YouTubeVideoMeta[]> {
-    if (!this.isConfigured) {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
       throw new Error('YouTube API key is not configured');
     }
 
@@ -154,7 +179,7 @@ export class YouTubeDataService {
     url.searchParams.set('part', 'snippet,contentDetails');
     url.searchParams.set('maxResults', String(Math.min(50, Math.max(1, maxResults))));
     url.searchParams.set('playlistId', playlistId);
-    url.searchParams.set('key', this.apiKey);
+    url.searchParams.set('key', apiKey);
 
     const response = await fetch(url);
     if (!response.ok) {
@@ -238,7 +263,8 @@ export class YouTubeDataService {
     >
   > {
     const map = new Map();
-    if (!this.isConfigured || videoIds.length === 0) return map;
+    const apiKey = this.getApiKey();
+    if (!apiKey || videoIds.length === 0) return map;
 
     const uniqueIds = Array.from(new Set(videoIds));
     const chunkSize = 50;
@@ -248,7 +274,7 @@ export class YouTubeDataService {
       const url = new URL('https://www.googleapis.com/youtube/v3/videos');
       url.searchParams.set('part', 'snippet,contentDetails');
       url.searchParams.set('id', chunk.join(','));
-      url.searchParams.set('key', this.apiKey);
+      url.searchParams.set('key', apiKey);
 
       try {
         const res = await fetch(url);

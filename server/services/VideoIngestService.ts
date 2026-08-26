@@ -377,6 +377,8 @@ export class VideoIngestService {
         '--no-playlist',
         '--newline',
         '--no-mtime',
+        '--extractor-args',
+        'youtube:player_client=mweb,android,web',
         '-o',
         tempTarget,
         `https://www.youtube.com/watch?v=${meta.id}`,

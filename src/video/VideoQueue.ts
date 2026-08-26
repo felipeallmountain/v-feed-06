@@ -208,6 +208,31 @@ export class VideoQueue {
     return this.cacheItems;
   }
 
+  async triggerInteractionQuery(query: string, reason?: string): Promise<void> {
+    console.log(`[v-feed] Triggering interaction query: "${query}" (${reason || 'Spectator Gesture'})`);
+    try {
+      // 1. Trigger YouTube search & ingestion in background
+      await this.youtube.triggerSync({
+        searchTopic: query,
+        maxVideos: 5,
+      });
+
+      // 2. Refresh playlist manifest to incorporate new items
+      await this.refreshPlaylist();
+
+      // 3. If items exist, start playback of the most recent item
+      if (this.items.length > 0) {
+        this.index = 0;
+        await this.playCurrent();
+      }
+    } catch (err) {
+      console.warn('[v-feed] Interaction query sync warning:', err);
+      if (this.items.length > 0) {
+        void this.next();
+      }
+    }
+  }
+
   async syncYouTube(options?: {
     playlistId?: string;
     searchTopic?: string;

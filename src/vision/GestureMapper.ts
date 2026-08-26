@@ -214,12 +214,23 @@ export class GestureMapper {
     // Average global lock for single-screen fallback and master audio resonance
     const avgLock = nextLocks.reduce((a, b) => a + b, 0) / 6;
     const avgNoise = nextNoises.reduce((a, b) => a + b, 0) / 6;
-
-    // FR-03.4 Velocity Fragmentation
     const velNorm = THREE_CLAMP(this.smoothedVelocity / 1.2, 0, 1);
-    const rgbSplit = velNorm * 1.4;
-    const hJitter = velNorm * 0.9;
-    const vHold = (1 - avgLock) * 0.35;
+
+    // Prolonged Stillness Inactivity (> 5.0s): fade into analog white/green static snow
+    const stillnessSec = store.interaction?.stillnessDurationSec ?? 0;
+    let stillnessFade = 0;
+    if (stillnessSec > 5.0) {
+      stillnessFade = Math.min(1.0, (stillnessSec - 5.0) / 3.0); // 3s ramp
+    }
+
+    const effectiveAvgLock = avgLock * (1.0 - stillnessFade);
+    const effectiveAvgNoise = Math.min(1.0, avgNoise + stillnessFade * (1.0 - avgNoise));
+
+    // FR-03.4 Velocity & Kinetic Energy Glitch Modulation
+    const kineticEnergy = store.interaction?.kineticEnergy ?? velNorm;
+    const rgbSplit = THREE_CLAMP(kineticEnergy * 1.6, 0, 2.0);
+    const hJitter = THREE_CLAMP(kineticEnergy * 1.1, 0, 1.2);
+    const vHold = (1 - effectiveAvgLock) * 0.35 + stillnessFade * 0.5;
 
     // FR-03.3 Localized Hand Interference
     const handActive = leftHand.active || rightHand.active;
@@ -236,10 +247,10 @@ export class GestureMapper {
     });
 
     store.patchShaders({
-      signalLock: avgLock,
-      noiseGain: avgNoise,
-      screenSignalLocks: nextLocks,
-      screenNoiseGains: nextNoises,
+      signalLock: effectiveAvgLock,
+      noiseGain: effectiveAvgNoise,
+      screenSignalLocks: nextLocks.map((l) => l * (1.0 - stillnessFade)),
+      screenNoiseGains: nextNoises.map((n) => Math.min(1.0, n + stillnessFade * (1.0 - n))),
       rgbSplit,
       hJitter,
       vHold,

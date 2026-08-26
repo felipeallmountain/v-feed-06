@@ -11,6 +11,7 @@ import {
   type VideoMode,
 } from '../core/StateManager';
 import type { VideoQueue } from '../video/VideoQueue';
+import { synthesizeBroadcastQuery } from '../vision/BroadcastQuerySynthesizer';
 
 const STORAGE_KEY = 'vfeed-calibration';
 
@@ -59,6 +60,16 @@ export class CalibrationHUD {
   private fpsController: { fps: string } | null = null;
   private curvatureCtrl: ReturnType<GUI['add']> | null = null;
   private shaderBindings: ShaderUniformsState | null = null;
+  private interactionReadouts: {
+    pose: string;
+    density: string;
+    kinetics: string;
+    chroma: string;
+    hold: string;
+    cooldown: string;
+    lastQuery: string;
+    triggerTest?: () => void;
+  } | null = null;
 
   attach(videoQueue: VideoQueue, feedVideo?: HTMLVideoElement): void {
     this.videoQueue = videoQueue;
@@ -852,6 +863,69 @@ export class CalibrationHUD {
       antennaFolder.add(ro, 'status').name(scrNames[i]).disable(),
     );
 
+    // --- INTERACTION & BROADCAST QUERY SYNTHESIS FOLDER ---
+    const interFolder = gui.addFolder('Interaction & Query Synthesis');
+    const interSettings = {
+      enabled: store.interaction?.enabled ?? true,
+      holdSec: (store.interaction?.holdDurationMs || 1800) / 1000,
+      cooldownSec: store.interaction?.cooldownDurationSec || 10,
+    };
+
+    interFolder
+      .add(interSettings, 'enabled')
+      .name('Enable Auto Query Sync')
+      .onChange((v: boolean) => {
+        store.setInteractionEnabled(v);
+      });
+
+    interFolder
+      .add(interSettings, 'holdSec', 0.8, 3.5, 0.1)
+      .name('Hold Debounce (s)')
+      .onChange((v: number) => {
+        store.patchInteraction({ holdDurationMs: Math.round(v * 1000) });
+      });
+
+    interFolder
+      .add(interSettings, 'cooldownSec', 5, 30, 1)
+      .name('Cooldown Lock (s)')
+      .onChange((v: number) => {
+        store.patchInteraction({ cooldownDurationSec: v });
+      });
+
+    this.interactionReadouts = {
+      pose: 'NONE',
+      density: 'EMPTY',
+      kinetics: 'STEADY',
+      chroma: 'NEUTRAL',
+      hold: '0%',
+      cooldown: 'Ready',
+      lastQuery: 'None',
+      triggerTest: () => {
+        const curInter = useAppStore.getState().interaction;
+        const curTrack = useAppStore.getState().tracking;
+        const query = synthesizeBroadcastQuery({
+          pose: curInter.activePose,
+          density: curInter.densityState,
+          kinetics: curInter.kineticState,
+          proximity: curInter.proximityState,
+          chroma: curInter.chromaState,
+          personCount: curTrack.personCount,
+          kineticEnergy: curInter.kineticEnergy,
+          distanceMeters: curTrack.distance,
+        });
+        void this.videoQueue?.triggerInteractionQuery(query.rawQuery, 'Manual HUD Trigger');
+      },
+    };
+
+    interFolder.add(this.interactionReadouts, 'pose').name('Active Pose').disable();
+    interFolder.add(this.interactionReadouts, 'density').name('Audience Density').disable();
+    interFolder.add(this.interactionReadouts, 'kinetics').name('Kinetic Dynamics').disable();
+    interFolder.add(this.interactionReadouts, 'chroma').name('Clothing Chroma').disable();
+    interFolder.add(this.interactionReadouts, 'hold').name('Hold Progress').disable();
+    interFolder.add(this.interactionReadouts, 'cooldown').name('Cooldown Lock').disable();
+    interFolder.add(this.interactionReadouts, 'lastQuery').name('Last Synthesized Query').disable();
+    interFolder.add(this.interactionReadouts, 'triggerTest').name('⚡ Trigger Test Query');
+
     const video = gui.addFolder('Video & Ingestion');
 
     // Embedded live video canvas container for direct preview in lil-gui
@@ -1534,6 +1608,19 @@ export class CalibrationHUD {
       if (this.nowPlayingController && currentItem) {
         this.nowPlayingController.title = currentItem.title;
       }
+    }
+
+    // Update Spectator Interaction Readouts
+    if (this.interactionReadouts) {
+      const inter = useAppStore.getState().interaction;
+      this.interactionReadouts.pose = inter.activePose;
+      this.interactionReadouts.density = inter.densityState;
+      this.interactionReadouts.kinetics = `${inter.kineticState} (${Math.round(inter.kineticEnergy * 100)}%)`;
+      this.interactionReadouts.chroma = inter.chromaState;
+      this.interactionReadouts.hold = `${Math.round(inter.holdProgress * 100)}%`;
+      this.interactionReadouts.cooldown =
+        inter.cooldownRemainingSec > 0 ? `${inter.cooldownRemainingSec}s` : 'Ready';
+      this.interactionReadouts.lastQuery = inter.lastQuery || 'None';
     }
   }
 

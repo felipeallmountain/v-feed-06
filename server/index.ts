@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
@@ -10,10 +11,12 @@ import { createCalibrationRouter } from './routes/calibration.js';
 import { VideoIngestService } from './services/VideoIngestService.js';
 import { YouTubeDataService } from './services/YouTubeDataService.js';
 
-dotenv.config();
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
+
+// Explicitly load .env from root to ensure process.env is always populated
+dotenv.config({ path: path.join(root, '.env') });
+
 const isProd = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT ?? 3000);
 

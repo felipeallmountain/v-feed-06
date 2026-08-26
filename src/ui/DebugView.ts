@@ -246,22 +246,105 @@ export class DebugView {
 
   private drawTelemetry(state: ReturnType<typeof useAppStore.getState>): void {
     const { width, height } = this.canvas;
+    const inter = state.interaction;
 
-    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    this.ctx.fillRect(0, height - 20, width, 20);
+    // Bottom telemetry status strip
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    this.ctx.fillRect(0, height - 24, width, 24);
 
     this.ctx.fillStyle = '#e8e4d9';
     this.ctx.font = '10px monospace';
-    this.ctx.fillText(`${state.fps} FPS`, 6, height - 7);
+    this.ctx.fillText(`${state.fps} FPS`, 6, height - 9);
 
     const modeLabel = `MODE: ${state.videoMode.toUpperCase()}`;
-    this.ctx.fillText(modeLabel, 60, height - 7);
+    this.ctx.fillText(modeLabel, 60, height - 9);
 
     const peopleCount = state.tracking.personCount || (state.tracking.present ? 1 : 0);
     const trackLabel = state.tracking.present
       ? `PEOPLE: ${peopleCount} (${state.tracking.distance.toFixed(1)}m)`
       : 'USER: IDLE';
     this.ctx.fillStyle = state.tracking.present ? '#3ddc97' : '#8a92a6';
-    this.ctx.fillText(trackLabel, width - 130, height - 7);
+    this.ctx.fillText(trackLabel, width - 130, height - 9);
+
+    // Top interaction telemetry HUD overlay
+    if (inter) {
+      const topBarH = 26;
+      this.ctx.fillStyle = 'rgba(10, 12, 18, 0.85)';
+      this.ctx.fillRect(0, 0, width, topBarH);
+
+      // 1. Pose Badge
+      let poseBadgeColor = '#8a92a6';
+      let poseText = 'POSE: NONE';
+      if (inter.activePose !== 'NONE') {
+        poseBadgeColor = '#ffb703';
+        poseText = `POSE: ${inter.activePose.replace('POSE_', '')}`;
+      }
+      this.ctx.fillStyle = poseBadgeColor;
+      this.ctx.font = 'bold 9px monospace';
+      this.ctx.fillText(poseText, 6, 17);
+
+      // 2. Density & Kinetics
+      this.ctx.fillStyle = '#00e5ff';
+      this.ctx.font = '9px monospace';
+      const densityStr = `DEN: ${inter.densityState}`;
+      const kineticStr = `KIN: ${inter.kineticState} (${Math.round(inter.kineticEnergy * 100)}%)`;
+      this.ctx.fillText(`${densityStr} | ${kineticStr}`, 100, 17);
+
+      // 3. Clothing Chroma badge
+      let chromaColor = '#8a92a6';
+      if (inter.chromaState === 'WARM_RED') chromaColor = '#ff3366';
+      else if (inter.chromaState === 'COOL_BLUE') chromaColor = '#00e5ff';
+      else if (inter.chromaState === 'DARK_NEUTRAL') chromaColor = '#555566';
+
+      this.ctx.fillStyle = chromaColor;
+      this.ctx.fillRect(width - 135, 7, 8, 12);
+      this.ctx.fillStyle = '#e8e4d9';
+      this.ctx.fillText(`CHROMA: ${inter.chromaState}`, width - 122, 17);
+
+      // 4. Hold & Cooldown Bar (middle overlay when holding or cooling down)
+      if (inter.isHolding && inter.holdProgress > 0) {
+        const barW = Math.min(220, width - 20);
+        const barH = 14;
+        const barX = (width - barW) / 2;
+        const barY = 32;
+
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        this.ctx.fillRect(barX, barY, barW, barH);
+        this.ctx.strokeStyle = '#3ddc97';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(barX, barY, barW, barH);
+
+        this.ctx.fillStyle = 'linear-gradient(90deg, #00e5ff, #3ddc97)';
+        this.ctx.fillStyle = '#3ddc97';
+        this.ctx.fillRect(barX + 2, barY + 2, (barW - 4) * inter.holdProgress, barH - 4);
+
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 9px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(
+          `HOLDING ${inter.candidateState?.replace('POSE:', '').replace('DENSITY:', '').replace('KINETIC:', '')} (${Math.round(inter.holdProgress * 100)}%)`,
+          width / 2,
+          barY + 11,
+        );
+        this.ctx.textAlign = 'left';
+      } else if (inter.cooldownRemainingSec > 0) {
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect((width - 140) / 2, 32, 140, 14);
+        this.ctx.fillStyle = '#ffaa00';
+        this.ctx.font = '9px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`COOLDOWN: ${inter.cooldownRemainingSec}s`, width / 2, 43);
+        this.ctx.textAlign = 'left';
+      }
+
+      // 5. Last Synthesized Query banner
+      if (inter.lastQuery) {
+        this.ctx.fillStyle = 'rgba(10, 14, 22, 0.9)';
+        this.ctx.fillRect(0, height - 42, width, 18);
+        this.ctx.fillStyle = '#3ddc97';
+        this.ctx.font = '8.5px monospace';
+        this.ctx.fillText(`⚡ QUERY: "${inter.lastQuery}" [${inter.lastTriggerReason || ''}]`, 6, height - 30);
+      }
+    }
   }
 }

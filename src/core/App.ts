@@ -17,6 +17,7 @@ import {
 } from '../vision/cameraDiagnostics';
 import { CameraManager } from '../vision/CameraManager';
 import { GestureMapper } from '../vision/GestureMapper';
+import { InteractionController } from '../vision/InteractionController';
 import { MediaPipeTracker } from '../vision/MediaPipeTracker';
 
 export class App {
@@ -24,6 +25,7 @@ export class App {
   private camera: CameraManager | null = null;
   private tracker: MediaPipeTracker | null = null;
   private mapper = new GestureMapper();
+  private interaction = new InteractionController();
   private videoQueue = new VideoQueue();
   private audio = new AudioEngine();
   private hud = new CalibrationHUD();
@@ -80,6 +82,11 @@ export class App {
     this.hud.init();
     this.videoQueue.attach(this.scene.videoPass, this.scene);
 
+    // Register query synthesizer event dispatcher → VideoQueue YouTube ingestion & playback
+    this.interaction.onQuerySynthesized((query) => {
+      void this.videoQueue.triggerInteractionQuery(query.rawQuery, query.sourceTrigger);
+    });
+
     await this.refreshDiagnostics();
     this.bindUnlock();
 
@@ -120,6 +127,7 @@ export class App {
           this.camera.video,
           useAppStore.getState().tracking.mirrorCamera,
         );
+        this.interaction.update(frame, this.camera.video);
         this.mapper.update(frame);
       } else {
         const sh = useAppStore.getState().shaders;
@@ -238,6 +246,7 @@ export class App {
     this.hud.dispose();
     this.videoQueue.dispose();
     this.audio.dispose();
+    this.interaction.reset();
     this.tracker?.dispose();
     this.camera?.stop();
     this.scene?.dispose();
