@@ -38,6 +38,20 @@ export interface PlaylistResponse {
   ingestion: IngestStatusResponse;
 }
 
+export interface QuotaStatusResponse {
+  date: string;
+  unitsUsed: number;
+  dailyBudget: number;
+  percentage: number;
+  searchCalls: number;
+  videoDetailsCalls: number;
+  playlistCalls: number;
+  cacheHits: number;
+  isProtectedMode: boolean;
+  manualOverride: boolean;
+  lastResetUtc: string;
+}
+
 export class YouTubeService {
   async fetchPlaylist(): Promise<PlaylistResponse> {
     const res = await fetch('/api/playlist');
@@ -45,6 +59,41 @@ export class YouTubeService {
       throw new Error(`Playlist request failed: ${res.status}`);
     }
     return (await res.json()) as PlaylistResponse;
+  }
+
+  async fetchQuotaStatus(): Promise<QuotaStatusResponse | null> {
+    try {
+      const res = await fetch('/api/quota');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.quota || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async toggleQuotaProtection(enabled: boolean): Promise<QuotaStatusResponse | null> {
+    try {
+      const res = await fetch('/api/quota/toggle-protection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.quota || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async clearCache(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/quota/clear-cache', { method: 'POST' });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   async triggerSync(options?: {

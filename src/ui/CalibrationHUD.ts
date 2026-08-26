@@ -67,6 +67,8 @@ export class CalibrationHUD {
     chroma: string;
     hold: string;
     cooldown: string;
+    quotaUsage: string;
+    quotaSaver: boolean;
     lastQuery: string;
     triggerTest?: () => void;
   } | null = null;
@@ -899,6 +901,8 @@ export class CalibrationHUD {
       chroma: 'NEUTRAL',
       hold: '0%',
       cooldown: 'Ready',
+      quotaUsage: '0% (0.0k/9.0k)',
+      quotaSaver: store.quota?.isProtectedMode ?? false,
       lastQuery: 'None',
       triggerTest: () => {
         const curInter = useAppStore.getState().interaction;
@@ -923,6 +927,13 @@ export class CalibrationHUD {
     interFolder.add(this.interactionReadouts, 'chroma').name('Clothing Chroma').disable();
     interFolder.add(this.interactionReadouts, 'hold').name('Hold Progress').disable();
     interFolder.add(this.interactionReadouts, 'cooldown').name('Cooldown Lock').disable();
+    interFolder.add(this.interactionReadouts, 'quotaUsage').name('YouTube Quota').disable();
+    interFolder
+      .add(this.interactionReadouts, 'quotaSaver')
+      .name('Quota Saver (Local First)')
+      .onChange((v: boolean) => {
+        void this.videoQueue?.toggleQuotaProtection(v);
+      });
     interFolder.add(this.interactionReadouts, 'lastQuery').name('Last Synthesized Query').disable();
     interFolder.add(this.interactionReadouts, 'triggerTest').name('⚡ Trigger Test Query');
 
@@ -1613,6 +1624,7 @@ export class CalibrationHUD {
     // Update Spectator Interaction Readouts
     if (this.interactionReadouts) {
       const inter = useAppStore.getState().interaction;
+      const quota = useAppStore.getState().quota;
       this.interactionReadouts.pose = inter.activePose;
       this.interactionReadouts.density = inter.densityState;
       this.interactionReadouts.kinetics = `${inter.kineticState} (${Math.round(inter.kineticEnergy * 100)}%)`;
@@ -1620,6 +1632,10 @@ export class CalibrationHUD {
       this.interactionReadouts.hold = `${Math.round(inter.holdProgress * 100)}%`;
       this.interactionReadouts.cooldown =
         inter.cooldownRemainingSec > 0 ? `${inter.cooldownRemainingSec}s` : 'Ready';
+      if (quota) {
+        this.interactionReadouts.quotaUsage = `${quota.percentage}% (${(quota.unitsUsed / 1000).toFixed(1)}k/${(quota.dailyBudget / 1000).toFixed(1)}k)`;
+        this.interactionReadouts.quotaSaver = quota.isProtectedMode;
+      }
       this.interactionReadouts.lastQuery = inter.lastQuery || 'None';
     }
   }

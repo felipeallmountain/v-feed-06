@@ -63,6 +63,10 @@ export class VideoIngestService {
     this.cleanAndRebuildManifest();
   }
 
+  getYouTubeService(): YouTubeDataService {
+    return this.youtube;
+  }
+
   /**
    * Get current live status of the ingestion pipeline.
    */
@@ -185,32 +189,91 @@ export class VideoIngestService {
   }
 
   /**
-   * Triggers a sync by fetching candidates from YouTube and downloading missing ones.
+   * Semantically matches local downloaded videos against a search query using tokenized keyword scoring.
+   */
+  findMatchingLocalVideos(searchQuery: string): IngestedVideo[] {
+    const ready = this.getReadyVideos();
+    if (ready.length === 0) return [];
+
+    const clean = searchQuery
+      .toLowerCase()
+      .replace(/#shorts/gi, '')
+      .replace(/[^\w\s]/g, ' ');
+    const tokens = clean.split(/\s+/).filter((t) => t.length >= 3);
+
+    if (tokens.length === 0) return ready;
+
+    const scored = ready.map((v) => {
+      const text = `${v.title} ${v.description || ''} ${v.channelTitle}`.toLowerCase();
+      let score = 0;
+      for (const token of tokens) {
+        if (text.includes(token)) score += 10;
+      }
+      return { video: v, score };
+    });
+
+    const matches = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score).map((s) => s.video);
+    return matches.length > 0 ? matches : ready;
+  }
+
+  /**
+   * Triggers a sync by fetching candidates from YouTube or falling back to smart local matching.
    */
   async sync(options?: {
     playlistId?: string;
     searchTopic?: string;
     maxVideos?: number;
-  }): Promise<{ queued: number; alreadyCached: number; totalFound: number }> {
-    if (!this.youtube.isConfigured) {
-      throw new Error('YouTube API is not configured. Set YOUTUBE_API_KEY in .env');
-    }
-
-    const playlistId = options?.playlistId || process.env.YOUTUBE_PLAYLIST_ID;
+  }): Promise<{
+    queued: number;
+    alreadyCached: number;
+    totalFound: number;
+    quotaProtected?: boolean;
+    matchedLocalVideos?: IngestedVideo[];
+  }> {
     const searchTopic =
       options?.searchTopic ||
       process.env.YOUTUBE_SEARCH_QUERY ||
       'vertical synthwave retro shorts #shorts';
+    const playlistId = options?.playlistId || process.env.YOUTUBE_PLAYLIST_ID;
     const maxVideos = options?.maxVideos || Number(process.env.YOUTUBE_MAX_VIDEOS || 10);
+
+    // If YouTube API is unconfigured or in Quota Protection Mode, use local semantic matching
+    if (!this.youtube.isConfigured || this.youtube.getQuotaStatus().isProtectedMode) {
+      console.log(`[v-feed quota] Quota protection / local matching active for topic: "${searchTopic}"`);
+      const matches = this.findMatchingLocalVideos(searchTopic);
+      return {
+        queued: 0,
+        alreadyCached: matches.length,
+        totalFound: matches.length,
+        quotaProtected: true,
+        matchedLocalVideos: matches,
+      };
+    }
 
     let candidates: YouTubeVideoMeta[] = [];
 
-    if (playlistId && playlistId.trim().length > 0) {
-      console.log(`[v-feed] Fetching YouTube playlist: ${playlistId}`);
-      candidates = await this.youtube.fetchPlaylistItems(playlistId, maxVideos);
-    } else {
-      console.log(`[v-feed] Searching YouTube shorts for query: "${searchTopic}"`);
-      candidates = await this.youtube.searchShorts(searchTopic, maxVideos);
+    try {
+      if (playlistId && playlistId.trim().length > 0) {
+        console.log(`[v-feed] Fetching YouTube playlist: ${playlistId}`);
+        candidates = await this.youtube.fetchPlaylistItems(playlistId, maxVideos);
+      } else {
+        console.log(`[v-feed] Searching YouTube shorts for query: "${searchTopic}"`);
+        candidates = await this.youtube.searchShorts(searchTopic, maxVideos);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('QUOTA_PROTECTED')) {
+        console.log(`[v-feed quota] Daily quota reached during search. Fallback to local semantic match.`);
+        const matches = this.findMatchingLocalVideos(searchTopic);
+        return {
+          queued: 0,
+          alreadyCached: matches.length,
+          totalFound: matches.length,
+          quotaProtected: true,
+          matchedLocalVideos: matches,
+        };
+      }
+      throw err;
     }
 
     let alreadyCached = 0;

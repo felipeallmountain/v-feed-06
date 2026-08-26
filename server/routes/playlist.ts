@@ -54,6 +54,47 @@ export function createPlaylistRouter(
   });
 
   /**
+   * Returns live YouTube API quota usage and protection status.
+   */
+  router.get('/quota', (_req, res) => {
+    try {
+      const quota = ingestService.getYouTubeService().getQuotaStatus();
+      res.json({ ok: true, quota });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Toggles manual quota protection mode.
+   */
+  router.post('/quota/toggle-protection', (req, res) => {
+    try {
+      const { enabled } = req.body || {};
+      const yt = ingestService.getYouTubeService();
+      yt.getQuotaGuard().setManualProtection(Boolean(enabled));
+      res.json({ ok: true, quota: yt.getQuotaStatus() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Clears the persistent YouTube API cache.
+   */
+  router.post('/quota/clear-cache', (_req, res) => {
+    try {
+      ingestService.getYouTubeService().clearCache();
+      res.json({ ok: true, message: 'YouTube API cache cleared successfully' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
    * Triggers YouTube playlist or search synchronization and begins background downloading.
    */
   router.post('/ingest/sync', async (req, res) => {

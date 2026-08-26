@@ -259,6 +259,14 @@ export class DebugView {
     const modeLabel = `MODE: ${state.videoMode.toUpperCase()}`;
     this.ctx.fillText(modeLabel, 60, height - 9);
 
+    // Quota status badge
+    const quota = state.quota;
+    if (quota) {
+      this.ctx.fillStyle = quota.isProtectedMode || quota.percentage > 85 ? '#ffaa00' : '#00e5ff';
+      const quotaText = `QUOTA: ${quota.percentage}% (${(quota.unitsUsed / 1000).toFixed(1)}k/${(quota.dailyBudget / 1000).toFixed(1)}k)`;
+      this.ctx.fillText(quotaText, 140, height - 9);
+    }
+
     const peopleCount = state.tracking.personCount || (state.tracking.present ? 1 : 0);
     const trackLabel = state.tracking.present
       ? `PEOPLE: ${peopleCount} (${state.tracking.distance.toFixed(1)}m)`

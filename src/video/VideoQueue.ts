@@ -61,6 +61,12 @@ export class VideoQueue {
 
       this.updateActiveQueue();
 
+      // Poll live quota status and update global store
+      const quota = await this.youtube.fetchQuotaStatus();
+      if (quota) {
+        useAppStore.getState().setQuotaState(quota);
+      }
+
       if (this.items.length === 0) {
         console.warn(
           '[v-feed] No video content available yet — procedural feed active. Use Admin to sync YouTube or add MP4s.',
@@ -109,7 +115,7 @@ export class VideoQueue {
 
   private startBackgroundPolling(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
-    // Periodically poll playlist every 20 seconds to incorporate newly ingested YouTube videos
+    // Periodically poll playlist every 20 seconds to incorporate newly ingested YouTube videos and update quota status
     this.pollTimer = window.setInterval(() => {
       void this.refreshPlaylist();
     }, 20000);
@@ -211,16 +217,16 @@ export class VideoQueue {
   async triggerInteractionQuery(query: string, reason?: string): Promise<void> {
     console.log(`[v-feed] Triggering interaction query: "${query}" (${reason || 'Spectator Gesture'})`);
     try {
-      // 1. Trigger YouTube search & ingestion in background
+      // 1. Trigger YouTube search & ingestion in background (or local matching if in quota protection mode)
       await this.youtube.triggerSync({
         searchTopic: query,
         maxVideos: 5,
       });
 
-      // 2. Refresh playlist manifest to incorporate new items
+      // 2. Refresh playlist manifest and quota status
       await this.refreshPlaylist();
 
-      // 3. If items exist, start playback of the most recent item
+      // 3. If matching local videos or new queue items exist, advance immediately
       if (this.items.length > 0) {
         this.index = 0;
         await this.playCurrent();
@@ -231,6 +237,18 @@ export class VideoQueue {
         void this.next();
       }
     }
+  }
+
+  async toggleQuotaProtection(enabled: boolean): Promise<void> {
+    const res = await this.youtube.toggleQuotaProtection(enabled);
+    if (res) {
+      useAppStore.getState().setQuotaState(res);
+    }
+  }
+
+  async clearQuotaCache(): Promise<void> {
+    await this.youtube.clearCache();
+    await this.refreshPlaylist();
   }
 
   async syncYouTube(options?: {

@@ -44,6 +44,14 @@ export interface InteractionState {
   stillnessDurationSec: number;
 }
 
+export interface QuotaState {
+  unitsUsed: number;
+  dailyBudget: number;
+  percentage: number;
+  isProtectedMode: boolean;
+  cacheHits: number;
+}
+
 export interface ShaderUniformsState {
   matrixSplit: boolean;
   bezelWidthX: number;
@@ -197,6 +205,7 @@ export interface AppState {
   currentVideoUrl: string | null;
   tracking: TrackingState;
   interaction: InteractionState;
+  quota: QuotaState;
   shaders: ShaderUniformsState;
   setFps: (fps: number) => void;
   setHudVisible: (visible: boolean) => void;
@@ -234,6 +243,7 @@ export interface AppState {
   patchTracking: (partial: Partial<TrackingState>) => void;
   patchInteraction: (partial: Partial<InteractionState>) => void;
   setInteractionEnabled: (enabled: boolean) => void;
+  setQuotaState: (partial: Partial<QuotaState>) => void;
   patchShaders: (partial: Partial<ShaderUniformsState>) => void;
   setCornerOffset: (
     screenIndex: number,
@@ -277,6 +287,14 @@ export const DEFAULT_INTERACTION_STATE: InteractionState = {
   lastCategory: null,
   lastTriggerReason: null,
   stillnessDurationSec: 0,
+};
+
+export const DEFAULT_QUOTA_STATE: QuotaState = {
+  unitsUsed: 0,
+  dailyBudget: 9000,
+  percentage: 0,
+  isProtectedMode: false,
+  cacheHits: 0,
 };
 
 /** 6-Screen CRT Totem (Default — simulated 2x3 video wall with bezels & curved CRT tubes). */
@@ -495,6 +513,7 @@ export const useAppStore = createStore<AppState>((set) => ({
     antennaFalloffRadius: 0.45,
   },
   interaction: { ...DEFAULT_INTERACTION_STATE },
+  quota: { ...DEFAULT_QUOTA_STATE },
   shaders: { ...CRT_6X_TOTEM_PRESET },
   setFps: (fps) => set({ fps }),
   setHudVisible: (hudVisible) => set({ hudVisible }),
@@ -525,21 +544,20 @@ export const useAppStore = createStore<AppState>((set) => ({
                 offsetY: t?.offsetY ?? s.frames.screenTransforms?.[i]?.offsetY ?? 0,
                 rotation: t?.rotation ?? s.frames.screenTransforms?.[i]?.rotation ?? 0,
               }))
-            : (s.frames.screenTransforms ?? createDefaultFrameTransforms()),
+            : s.frames.screenTransforms,
       },
       showScreenFrames: partial.show !== undefined ? partial.show : s.showScreenFrames,
       screenFrameOpacity: partial.opacity !== undefined ? partial.opacity : s.screenFrameOpacity,
     })),
   setScreenFrameTransform: (index, transform) =>
     set((s) => {
-      const current = s.frames.screenTransforms ?? createDefaultFrameTransforms();
-      const next = current.map((item, i) =>
-        i === index ? { ...item, ...transform } : { ...item }
+      const nextTransforms = s.frames.screenTransforms.map((item, i) =>
+        i === index ? { ...item, ...transform } : item,
       );
       return {
         frames: {
           ...s.frames,
-          screenTransforms: next,
+          screenTransforms: nextTransforms,
         },
       };
     }),
@@ -554,9 +572,6 @@ export const useAppStore = createStore<AppState>((set) => ({
     set((s) => ({
       frames: {
         ...s.frames,
-        rotation: 0,
-        offsetX: 0,
-        offsetY: 0,
         screenTransforms: createDefaultFrameTransforms(),
       },
     })),
@@ -564,9 +579,9 @@ export const useAppStore = createStore<AppState>((set) => ({
     set((s) => {
       const nextLabels = [...s.frames.customLabels];
       const nextSubs = [...s.frames.customSubtitles];
-      if (index >= 0 && index < 6) {
-        nextLabels[index] = title;
-        if (subtitle !== undefined) nextSubs[index] = subtitle;
+      nextLabels[index] = title;
+      if (subtitle !== undefined) {
+        nextSubs[index] = subtitle;
       }
       return {
         frames: {
@@ -604,6 +619,8 @@ export const useAppStore = createStore<AppState>((set) => ({
     set((s) => ({ interaction: { ...s.interaction, ...partial } })),
   setInteractionEnabled: (enabled) =>
     set((s) => ({ interaction: { ...s.interaction, enabled } })),
+  setQuotaState: (partial) =>
+    set((s) => ({ quota: { ...s.quota, ...partial } })),
   patchShaders: (partial) =>
     set((s) => ({
       shaders: {

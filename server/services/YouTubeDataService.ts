@@ -1,13 +1,17 @@
 import dotenv from 'dotenv';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QuotaGuard, type QuotaStatus } from './QuotaGuard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const envPath = path.resolve(__dirname, '..', '..', '.env');
+const defaultRoot = path.resolve(__dirname, '..', '..');
+const envPath = path.resolve(defaultRoot, '.env');
 
 /**
  * YouTube Data API v3 Service
  * Fetches playlist items, searches vertical shorts, and retrieves video metadata.
+ * Equipped with persistent multi-tier disk caching and QuotaGuard unit tracking.
  */
 
 export interface YouTubeVideoMeta {
@@ -30,10 +34,21 @@ interface CacheEntry<T> {
 export class YouTubeDataService {
   private apiKey: string;
   private cache = new Map<string, CacheEntry<unknown>>();
-  private readonly defaultCacheTtlMs = 15 * 60 * 1000; // 15 minutes
+  private cacheFilePath: string;
+  private quotaGuard: QuotaGuard;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, quotaGuard?: QuotaGuard, configDir?: string) {
     this.apiKey = (apiKey || '').trim();
+    const cfg = configDir || path.join(defaultRoot, 'config');
+    this.cacheFilePath = path.join(cfg, 'youtube-api-cache.json');
+    this.quotaGuard = quotaGuard || new QuotaGuard(cfg);
+
+    this.loadDiskCache();
+  }
+
+  private get cacheTtlMs(): number {
+    const minutes = Number(process.env.YOUTUBE_CACHE_TTL_MINUTES || 360); // 6 hours default
+    return Math.max(5, minutes) * 60 * 1000;
   }
 
   getApiKey(): string {
@@ -60,6 +75,53 @@ export class YouTubeDataService {
     return this.getApiKey().length > 0;
   }
 
+  getQuotaStatus(): QuotaStatus {
+    return this.quotaGuard.getStatus();
+  }
+
+  getQuotaGuard(): QuotaGuard {
+    return this.quotaGuard;
+  }
+
+  private loadDiskCache(): void {
+    try {
+      if (fs.existsSync(this.cacheFilePath)) {
+        const raw = fs.readFileSync(this.cacheFilePath, 'utf-8');
+        const parsed = JSON.parse(raw) as Record<string, CacheEntry<unknown>>;
+        const now = Date.now();
+        let loadedCount = 0;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && v.expiresAt > now) {
+            this.cache.set(k, v);
+            loadedCount++;
+          }
+        }
+        if (loadedCount > 0) {
+          console.log(`[v-feed cache] Restored ${loadedCount} YouTube API queries from disk (${this.cacheFilePath})`);
+        }
+      }
+    } catch (err) {
+      console.warn('[v-feed cache] Failed to read disk cache:', err);
+    }
+  }
+
+  private saveDiskCache(): void {
+    try {
+      const dir = path.dirname(this.cacheFilePath);
+      fs.mkdirSync(dir, { recursive: true });
+      const obj: Record<string, CacheEntry<unknown>> = {};
+      const now = Date.now();
+      for (const [k, v] of this.cache.entries()) {
+        if (v.expiresAt > now) {
+          obj[k] = v;
+        }
+      }
+      fs.writeFileSync(this.cacheFilePath, JSON.stringify(obj, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn('[v-feed cache] Failed to write disk cache:', err);
+    }
+  }
+
   private getCached<T>(key: string): T | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
@@ -67,18 +129,33 @@ export class YouTubeDataService {
       this.cache.delete(key);
       return null;
     }
+    this.quotaGuard.recordCacheHit();
     return entry.data as T;
   }
 
-  private setCached<T>(key: string, data: T, ttlMs = this.defaultCacheTtlMs): void {
+  private setCached<T>(key: string, data: T, ttlMs = this.cacheTtlMs): void {
     this.cache.set(key, {
       data,
       expiresAt: Date.now() + ttlMs,
     });
+    this.saveDiskCache();
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+    try {
+      if (fs.existsSync(this.cacheFilePath)) {
+        fs.unlinkSync(this.cacheFilePath);
+      }
+      console.log('[v-feed cache] YouTube API disk & memory cache cleared');
+    } catch (err) {
+      console.warn('[v-feed cache] Failed to clear disk cache:', err);
+    }
   }
 
   /**
    * Search for vertical YouTube Shorts.
+   * Tracks 100 quota units for search.list and checks QuotaGuard budget.
    */
   async searchShorts(query: string, maxResults = 10): Promise<YouTubeVideoMeta[]> {
     const apiKey = this.getApiKey();
@@ -86,9 +163,16 @@ export class YouTubeDataService {
       throw new Error('YouTube API key is not configured');
     }
 
-    const cacheKey = `search:${query}:${maxResults}`;
+    const cacheKey = `search:${query.toLowerCase().trim()}:${maxResults}`;
     const cached = this.getCached<YouTubeVideoMeta[]>(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      console.log(`[v-feed cache] ✓ Served query "${query}" from cache (0 quota units)`);
+      return cached;
+    }
+
+    if (!this.quotaGuard.canAfford(101)) {
+      throw new Error('QUOTA_PROTECTED: Daily YouTube API quota threshold reached. Switching to local archive matching.');
+    }
 
     const url = new URL('https://www.googleapis.com/youtube/v3/search');
     url.searchParams.set('part', 'snippet');
@@ -103,6 +187,9 @@ export class YouTubeDataService {
       const errorBody = await response.text();
       throw new Error(`YouTube search API error ${response.status}: ${errorBody}`);
     }
+
+    // Track search call cost
+    this.quotaGuard.recordCost('search', 100);
 
     const data = (await response.json()) as {
       items?: Array<{
@@ -126,6 +213,7 @@ export class YouTubeDataService {
       .filter((id): id is string => Boolean(id));
 
     if (videoIds.length === 0) {
+      this.setCached(cacheKey, []);
       return [];
     }
 
@@ -164,6 +252,7 @@ export class YouTubeDataService {
 
   /**
    * Fetch items from a YouTube playlist.
+   * Tracks 1 quota unit for playlistItems.list.
    */
   async fetchPlaylistItems(playlistId: string, maxResults = 25): Promise<YouTubeVideoMeta[]> {
     const apiKey = this.getApiKey();
@@ -171,9 +260,16 @@ export class YouTubeDataService {
       throw new Error('YouTube API key is not configured');
     }
 
-    const cacheKey = `playlist:${playlistId}:${maxResults}`;
+    const cacheKey = `playlist:${playlistId.trim()}:${maxResults}`;
     const cached = this.getCached<YouTubeVideoMeta[]>(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      console.log(`[v-feed cache] ✓ Served playlist "${playlistId}" from cache (0 quota units)`);
+      return cached;
+    }
+
+    if (!this.quotaGuard.canAfford(2)) {
+      throw new Error('QUOTA_PROTECTED: Daily YouTube API quota threshold reached.');
+    }
 
     const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
     url.searchParams.set('part', 'snippet,contentDetails');
@@ -186,6 +282,9 @@ export class YouTubeDataService {
       const errorBody = await response.text();
       throw new Error(`YouTube playlist API error ${response.status}: ${errorBody}`);
     }
+
+    // Track playlist items list cost
+    this.quotaGuard.recordCost('playlist', 1);
 
     const data = (await response.json()) as {
       items?: Array<{
@@ -209,6 +308,7 @@ export class YouTubeDataService {
       .filter((id): id is string => Boolean(id));
 
     if (videoIds.length === 0) {
+      this.setCached(cacheKey, []);
       return [];
     }
 
@@ -247,6 +347,7 @@ export class YouTubeDataService {
 
   /**
    * Fetch detailed metadata (contentDetails, duration, thumbnails) for a list of video IDs.
+   * Tracks 1 quota unit per 50 video IDs.
    */
   async getVideoDetails(videoIds: string[]): Promise<
     Map<
@@ -279,6 +380,10 @@ export class YouTubeDataService {
       try {
         const res = await fetch(url);
         if (!res.ok) continue;
+
+        // Record 1 unit per chunk
+        this.quotaGuard.recordCost('videoDetails', 1);
+
         const data = (await res.json()) as {
           items?: Array<{
             id: string;

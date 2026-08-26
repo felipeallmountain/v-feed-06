@@ -236,6 +236,28 @@ const ADMIN_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="grid">
+    <!-- YouTube API Quota & Cache Status -->
+    <div class="card">
+      <h2>
+        <span>YouTube API Quota & Guard</span>
+        <span id="quota-badge" class="badge">Checking...</span>
+      </h2>
+      <div id="quota-units-text" style="font-size: 0.85rem; margin-bottom: 0.35rem;">
+        Units Used: 0 / 9,000 (0%)
+      </div>
+      <div class="progress-bar-wrap">
+        <div id="quota-progress" class="progress-bar-fill" style="background: linear-gradient(90deg, var(--primary), var(--cyan));"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);" id="quota-breakdown">
+        <span>Searches: 0 · Details: 0</span>
+        <span>Cache Hits: 0 (Free)</span>
+      </div>
+      <div class="btn-group" style="margin-top: 0.75rem;">
+        <button id="btn-toggle-quota-mode">Toggle Quota Saver Mode</button>
+        <button id="btn-clear-cache" class="danger">Clear API Cache</button>
+      </div>
+      <div class="status-box" id="quota-log">Persistent 6h disk cache active.</div>
+    </div>
     <!-- Automated Sync -->
     <div class="card">
       <h2>Automated Sync (Search or Playlist)</h2>
@@ -539,8 +561,84 @@ const ADMIN_HTML = `<!DOCTYPE html>
         serverStatus.style.color = 'var(--accent)';
       });
 
+    // Quota Guard Elements
+    const quotaBadge = document.getElementById('quota-badge');
+    const quotaUnitsText = document.getElementById('quota-units-text');
+    const quotaProgress = document.getElementById('quota-progress');
+    const quotaBreakdown = document.getElementById('quota-breakdown');
+    const quotaLog = document.getElementById('quota-log');
+    const btnToggleQuotaMode = document.getElementById('btn-toggle-quota-mode');
+    const btnClearCache = document.getElementById('btn-clear-cache');
+
+    let currentQuotaProtected = false;
+
+    btnToggleQuotaMode.addEventListener('click', async () => {
+      try {
+        const next = !currentQuotaProtected;
+        const res = await fetch('/api/quota/toggle-protection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: next })
+        });
+        const d = await res.json();
+        if (d.ok) {
+          quotaLog.textContent = next ? 'Quota Protection active (offline semantic matching only)' : 'Quota Protection disabled (API enabled)';
+          pollQuotaStatus();
+        }
+      } catch (err) {
+        alert('Toggle failed: ' + err.message);
+      }
+    });
+
+    btnClearCache.addEventListener('click', async () => {
+      if (!confirm('Clear all YouTube search & metadata cache?')) return;
+      try {
+        const res = await fetch('/api/quota/clear-cache', { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+          quotaLog.textContent = '✓ YouTube API disk & memory cache cleared.';
+          pollQuotaStatus();
+        }
+      } catch (err) {
+        alert('Clear cache failed: ' + err.message);
+      }
+    });
+
+    async function pollQuotaStatus() {
+      try {
+        const res = await fetch('/api/quota');
+        if (!res.ok) return;
+        const { quota } = await res.json();
+        if (!quota) return;
+
+        currentQuotaProtected = quota.isProtectedMode;
+        quotaUnitsText.textContent = 'Units Used Today: ' + quota.unitsUsed.toLocaleString() + ' / ' + quota.dailyBudget.toLocaleString() + ' (' + quota.percentage + '%)';
+        quotaProgress.style.width = quota.percentage + '%';
+
+        if (quota.percentage > 85 || quota.isProtectedMode) {
+          quotaProgress.style.background = 'linear-gradient(90deg, #ffaa00, #ff0055)';
+          quotaBadge.textContent = quota.isProtectedMode ? 'Protected (0-Cost Mode)' : 'High Usage';
+          quotaBadge.className = 'badge yt';
+        } else {
+          quotaProgress.style.background = 'linear-gradient(90deg, var(--cyan), var(--primary))';
+          quotaBadge.textContent = 'Active (Safe)';
+          quotaBadge.className = 'badge';
+        }
+
+        quotaBreakdown.innerHTML = '<span>Searches: ' + quota.searchCalls + ' (' + (quota.searchCalls * 100) + 'u) · Details: ' + quota.videoDetailsCalls + 'u</span>' +
+          '<span>Cache Hits: ' + quota.cacheHits + ' (Free)</span>';
+
+        btnToggleQuotaMode.textContent = quota.isProtectedMode ? 'Disable Quota Saver Mode' : 'Enable Quota Saver Mode';
+        btnToggleQuotaMode.classList.toggle('active', quota.isProtectedMode);
+      } catch (err) {
+        /* ignore */
+      }
+    }
+
     fetchLibrary();
+    pollQuotaStatus();
     setInterval(pollIngestStatus, 1500);
+    setInterval(pollQuotaStatus, 3000);
     setInterval(fetchLibrary, 10000);
   </script>
 </body>
