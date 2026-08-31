@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>V-FEED [06] — Parallel Monitor Calibration & Operator Console</title>
+  <link rel="stylesheet" href="/src/assets/styles.css" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07090e;
+      --surface: #10131b;
+      --surface-border: #1f2433;
+      --primary: #3ddc97;
+      --cyan: #00e5ff;
+      --accent: #ff0055;
+      --amber: #ffaa00;
+      --text: #e8ecf2;
+      --text-muted: #8a92a6;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header.calib-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand h1 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--primary);
+      text-transform: uppercase;
+    }
+
+    .brand span {
+      color: var(--cyan);
+      font-size: 0.85rem;
+    }
+
+    .badge {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+      font-weight: bold;
+    }
+
+    .badge.online {
+      background: #10291e;
+      color: var(--primary);
+      border: 1px solid rgba(61, 220, 151, 0.4);
+    }
+
+    .badge.standby {
+      background: #2b2314;
+      color: var(--amber);
+      border: 1px solid rgba(255, 170, 0, 0.4);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    button.btn {
+      background: #181d28;
+      border: 1px solid var(--surface-border);
+      color: var(--text);
+      padding: 0.4rem 0.75rem;
+      font-family: inherit;
+      font-size: 0.78rem;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition: all 0.15s ease;
+    }
+
+    button.btn:hover {
+      background: #22293a;
+      border-color: var(--cyan);
+      color: #fff;
+    }
+
+    button.btn.primary {
+      background: #162b21;
+      border-color: rgba(61, 220, 151, 0.5);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    button.btn.primary:hover {
+      background: #1d3b2c;
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .calib-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Left Column: Interactive Visualizer */
+    .visualizer-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      border-right: 1px solid var(--surface-border);
+      overflow: hidden;
+    }
+
+    .viz-toolbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--surface-border);
+      padding: 0.6rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .tool-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .tool-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-right: 0.25rem;
+    }
+
+    .pill-btn {
+      background: #141722;
+      border: 1px solid var(--surface-border);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 0.25rem 0.55rem;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s ease;
+    }
+
+    .pill-btn:hover {
+      color: var(--text);
+      border-color: var(--cyan);
+    }
+
+    .pill-btn.active {
+      background: #162638;
+      border-color: var(--cyan);
+      color: var(--cyan);
+      font-weight: bold;
+    }
+
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      position: relative;
+      background: radial-gradient(circle at center, #0c101a 0%, #06070a 100%);
+      overflow: hidden;
+    }
+
+    #matrix-canvas {
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .viz-footer {
+      background: var(--surface);
+      border-top: 1px solid var(--surface-border);
+      padding: 0.45rem 1rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Right Column: lil-gui docked panel */
+    .gui-col {
+      width: 380px;
+      flex-shrink: 0;
+      background: #0e1118;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #gui-panel {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Customizing lil-gui inside docked panel */
+    #gui-panel .lil-gui {
+      --background-color: #0e1118;
+      --text-color: #e8ecf2;
+      --title-background-color: #161b26;
+      --widget-color: #1b212f;
+      --hover-color: #242c3d;
+      --focus-color: #00e5ff;
+      --number-color: #00e5ff;
+      --string-color: #3ddc97;
+      font-family: inherit;
+      border: none;
+      width: 100% !important;
+    }
+
+    #gui-panel .lil-gui .title {
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    #gui-panel .lil-gui.root {
+      width: 100% !important;
+    }
+
+    @media (max-width: 900px) {
+      .calib-main {
+        flex-direction: column;
+      }
+      .gui-col {
+        width: 100%;
+        height: 50%;
+        border-top: 1px solid var(--surface-border);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="calib-header">
+    <div class="brand">
+      <h1>V-FEED [06]</h1>
+      <span>/ Parallel Calibration Console</span>
+      <span id="conn-status" class="badge standby">○ WAITING FOR MAIN STAGE...</span>
+    </div>
+
+    <div class="header-actions">
+      <button type="button" id="btn-open-main" class="btn">📺 Open Main Stage</button>
+      <button type="button" id="btn-popout" class="btn">🗗 Pop Out Window</button>
+      <button type="button" id="btn-export-json" class="btn">📥 Export JSON</button>
+      <button type="button" id="btn-import-json" class="btn">📤 Import JSON</button>
+      <button type="button" id="btn-save-all" class="btn primary">💾 Save to Disk</button>
+    </div>
+  </header>
+
+  <main class="calib-main">
+    <!-- Left: 2x3 Matrix Geometry & Corner Pinning Visualizer -->
+    <section class="visualizer-col">
+      <div class="viz-toolbar">
+        <div class="tool-group">
+          <span class="tool-label">Pattern:</span>
+          <button type="button" class="pill-btn active" data-pattern="grid">Grid</button>
+          <button type="button" class="pill-btn" data-pattern="crosshatch">Crosshatch</button>
+          <button type="button" class="pill-btn" data-pattern="colorbars">SMPTE Bars</button>
+          <button type="button" class="pill-btn" data-pattern="white">White</button>
+          <button type="button" class="pill-btn" data-pattern="black">Black</button>
+          <button type="button" class="pill-btn" data-pattern="none">Off</button>
+        </div>
+
+        <div class="tool-group">
+          <span class="tool-label">Active Screen:</span>
+          <button type="button" class="pill-btn active" data-screen="0">01</button>
+          <button type="button" class="pill-btn" data-screen="1">02</button>
+          <button type="button" class="pill-btn" data-screen="2">03</button>
+          <button type="button" class="pill-btn" data-screen="3">04</button>
+          <button type="button" class="pill-btn" data-screen="4">05</button>
+          <button type="button" class="pill-btn" data-screen="5">06</button>
+        </div>
+      </div>
+
+      <div class="canvas-container">
+        <canvas id="matrix-canvas" width="540" height="960"></canvas>
+      </div>
+
+      <div class="viz-footer">
+        <span>💡 Drag any corner handle (TL/TR/BR/BL) on the 2×3 visualizer to adjust monitor keystone & corner pinning in real-time.</span>
+        <span>Aspect: 9:16 (1080×1920)</span>
+      </div>
+    </section>
+
+    <!-- Right: Complete lil-gui Docked Sidebar -->
+    <aside class="gui-col">
+      <div id="gui-panel"></div>
+    </aside>
+  </main>
+
+  <script type="module" src="/src/calibration.ts"></script>
+</body>
+</html>

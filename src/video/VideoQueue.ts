@@ -269,6 +269,16 @@ export class VideoQueue {
     return this.usingFallback;
   }
 
+  get currentItem(): PlaylistItem | null {
+    if (this.items.length === 0) return null;
+    return this.items[this.index % this.items.length] ?? null;
+  }
+
+  get currentTitle(): string {
+    const item = this.currentItem;
+    return item ? item.title : this.mode === 'grid' ? 'Calibration Grid' : 'Procedural Feed';
+  }
+
   dispose(): void {
     if (this.storageListener) {
       window.removeEventListener('storage', this.storageListener);

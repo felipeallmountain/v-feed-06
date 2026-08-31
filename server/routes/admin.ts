@@ -204,7 +204,10 @@ const ADMIN_HTML = `<!DOCTYPE html>
   <div class="grid">
     <!-- Remote Mode & Playback -->
     <div class="card">
-      <h2>Remote Mode & Playback</h2>
+      <h2>
+        <span>Remote Mode & Playback</span>
+        <a href="/calibration.html" target="_blank" style="font-size: 0.75rem; color: var(--primary); text-transform: none; border: 1px solid rgba(61, 220, 151, 0.4); padding: 0.2rem 0.5rem; border-radius: 4px;">🗗 Open Parallel Calibration Console</a>
+      </h2>
       <div class="btn-group">
         <button id="btn-mode-live" data-mode="live">● Live (YouTube Ingested)</button>
         <button id="btn-mode-cache" data-mode="cache">Offline Cache (MP4)</button>
@@ -213,6 +216,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
       <div class="btn-group" style="margin-top: 0.75rem;">
         <button id="btn-prev">⏮ Previous Video</button>
         <button id="btn-next">⏭ Next Video</button>
+        <a href="/calibration.html" target="_blank" style="text-decoration: none;"><button type="button" class="active">🎛 Full lil-gui Console</button></a>
       </div>
       <div class="status-box" id="playback-status">Current Mode: live</div>
     </div>
@@ -322,6 +326,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
 
   <div class="links-bar">
     <a href="/" target="_blank">📺 Open Installation Window</a>
+    <a href="/calibration.html" target="_blank">🎛 Open Calibration Console</a>
     <a href="/api/playlist" target="_blank">📄 /api/playlist</a>
     <a href="/api/ingest/status" target="_blank">⚡ /api/ingest/status</a>
   </div>

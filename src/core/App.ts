@@ -8,17 +8,15 @@ import {
 import { useAppStore } from '../core/StateManager';
 import { SceneManager } from '../rendering/SceneManager';
 import { SkeletonOverlay } from '../rendering/SkeletonOverlay';
-import { CalibrationHUD } from '../ui/CalibrationHUD';
+import { CalibrationManager } from './CalibrationManager';
 import { DebugView } from '../ui/DebugView';
 import { VideoQueue } from '../video/VideoQueue';
-import {
-  formatCameraError,
-  probeCameraEnvironment,
-} from '../vision/cameraDiagnostics';
+import { formatCameraError, probeCameraEnvironment } from '../vision/cameraDiagnostics';
 import { CameraManager } from '../vision/CameraManager';
 import { GestureMapper } from '../vision/GestureMapper';
 import { InteractionController } from '../vision/InteractionController';
 import { MediaPipeTracker } from '../vision/MediaPipeTracker';
+import { syncChannel } from '../core/SyncChannel';
 
 export class App {
   private scene: SceneManager | null = null;
@@ -28,11 +26,13 @@ export class App {
   private interaction = new InteractionController();
   private videoQueue = new VideoQueue();
   private audio = new AudioEngine();
-  private hud = new CalibrationHUD();
+  private calibration = new CalibrationManager();
   private debug: DebugView | null = null;
   private skeleton: SkeletonOverlay | null = null;
   private raf = 0;
   private lastTs = 0;
+  private lastTelemetryTs = 0;
+  private unsubscribeSync: (() => void) | null = null;
   private running = false;
   private trackerReady = false;
   private unlocking = false;
@@ -78,13 +78,83 @@ export class App {
     this.camera = new CameraManager(webcam);
     this.tracker = new MediaPipeTracker();
     this.debug = new DebugView(debugCanvas);
-    this.hud.attach(this.videoQueue, feedVideo);
-    this.hud.init();
+    this.calibration.attach(this.videoQueue);
+    this.calibration.init();
     this.videoQueue.attach(this.scene.videoPass, this.scene);
 
     // Register query synthesizer event dispatcher → VideoQueue YouTube ingestion & playback
     this.interaction.onQuerySynthesized((query) => {
       void this.videoQueue.triggerInteractionQuery(query.rawQuery, query.sourceTrigger);
+    });
+
+    // Cross-window sync bridge (Main Stage Role)
+    syncChannel.startHeartbeat('main');
+    this.unsubscribeSync = syncChannel.onMessage((msg) => {
+      if (msg.type === 'REQUEST_INITIAL_STATE') {
+        syncChannel.sendInitialState(this.calibration.getCalibrationPayload());
+      } else if (msg.type === 'REMOTE_COMMAND') {
+        const { action, value } = msg.payload;
+        if (action === 'play') {
+          void feedVideo.play();
+        } else if (action === 'pause') {
+          feedVideo.pause();
+        } else if (action === 'toggle_play') {
+          if (feedVideo.paused) {
+            void feedVideo.play();
+          } else {
+            feedVideo.pause();
+          }
+        } else if (action === 'next') {
+          void this.videoQueue.next();
+        } else if (action === 'prev') {
+          void this.videoQueue.prev();
+        } else if (action === 'seek') {
+          if (feedVideo.duration) {
+            feedVideo.currentTime = (value / 100) * feedVideo.duration;
+          }
+        } else if (action === 'sync_youtube') {
+          void this.videoQueue.syncYouTube();
+        } else if (action === 'test_query') {
+          this.calibration.triggerTestQuery();
+        } else if (action === 'set_video_mode') {
+          this.videoQueue.setMode(value);
+        } else if (action === 'toggle_quota_protection') {
+          void this.videoQueue.toggleQuotaProtection(value);
+        } else if (action === 'apply_preset') {
+          this.calibration.applyPreset(value);
+        } else if (action === 'save_disk') {
+          this.calibration.loadSaved();
+        }
+      } else if (msg.type === 'STATE_PATCH') {
+        const patch = msg.payload;
+        const store = useAppStore.getState();
+        if (patch.shaders) store.patchShaders(patch.shaders);
+        if (patch.frames) store.setFrames(patch.frames);
+        if (patch.audio) store.setAudioState(patch.audio);
+        if (patch.tracking) store.patchTracking(patch.tracking);
+        if (patch.interaction) store.patchInteraction(patch.interaction);
+        if (patch.videoMode) store.setVideoMode(patch.videoMode);
+        if (patch.skeletonOverlay !== undefined) store.setSkeletonOverlay(patch.skeletonOverlay);
+        if (patch.skeletonStyle !== undefined) store.setSkeletonStyle(patch.skeletonStyle);
+        if (patch.skeletonLineThickness !== undefined) store.setSkeletonLineThickness(patch.skeletonLineThickness);
+        if (patch.skeletonLineOpacity !== undefined) store.setSkeletonLineOpacity(patch.skeletonLineOpacity);
+        if (patch.skeletonDotSize !== undefined) store.setSkeletonDotSize(patch.skeletonDotSize);
+        if (patch.skeletonDotOpacity !== undefined) store.setSkeletonDotOpacity(patch.skeletonDotOpacity);
+        if (patch.skeletonShowLines !== undefined) store.setSkeletonShowLines(patch.skeletonShowLines);
+        if (patch.skeletonShowDots !== undefined) store.setSkeletonShowDots(patch.skeletonShowDots);
+        if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
+        if (patch.debugOverlay !== undefined) store.setDebugOverlay(patch.debugOverlay);
+        if (patch.debugViewMode !== undefined) store.setDebugViewMode(patch.debugViewMode);
+      }
+    });
+
+    // Keyboard shortcut 'O' / 'Ctrl+Shift+O' to pop out parallel calibration console
+    window.addEventListener('keydown', (e: KeyboardEvent) => {
+      const chord = (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o';
+      if (e.key.toLowerCase() === 'o' || chord) {
+        e.preventDefault();
+        window.open('/calibration.html', 'vfeed_calib_window', 'width=1200,height=880');
+      }
     });
 
     await this.refreshDiagnostics();
@@ -115,6 +185,7 @@ export class App {
 
     this.running = true;
     this.lastTs = performance.now();
+    this.lastTelemetryTs = performance.now();
     const loop = (ts: number) => {
       if (!this.running) return;
       const dt = ts - this.lastTs;
@@ -140,10 +211,50 @@ export class App {
         }
       }
 
+      // Stream live telemetry tick to operator console every 50ms (20Hz)
+      if (ts - this.lastTelemetryTs > 50) {
+        this.lastTelemetryTs = ts;
+        const curState = useAppStore.getState();
+        const curInter = curState.interaction;
+        const curSh = curState.shaders;
+        syncChannel.sendTelemetry({
+          fps: curState.fps,
+          tracking: {
+            present: curState.tracking.present,
+            distance: curState.tracking.distance,
+            personCount: curState.tracking.personCount,
+            screenPresences: curState.tracking.screenPresences,
+            antennaLocks: curSh.screenSignalLocks || Array(6).fill(curSh.signalLock),
+            antennaNoises: curSh.screenNoiseGains || Array(6).fill(curSh.noiseGain),
+          },
+          interaction: {
+            activePose: curInter.activePose,
+            densityState: curInter.densityState,
+            kineticState: curInter.kineticState,
+            chromaState: curInter.chromaState,
+            kineticEnergy: curInter.kineticEnergy,
+            holdProgress: curInter.holdProgress,
+            isHolding: curInter.isHolding,
+            cooldownRemainingSec: curInter.cooldownRemainingSec,
+            lastQuery: curInter.lastQuery,
+            lastTriggerReason: curInter.lastTriggerReason,
+          },
+          quota: curState.quota,
+          video: {
+            title: this.videoQueue.currentTitle,
+            channelTitle: this.videoQueue.currentItem?.channelTitle,
+            currentTime: feedVideo.currentTime || 0,
+            duration: feedVideo.duration || 0,
+            paused: feedVideo.paused,
+            videoMode: curState.videoMode,
+            url: this.videoQueue.currentItem?.url,
+          },
+        });
+      }
+
       this.skeleton?.draw(frame);
       this.scene?.render();
       this.debug?.draw(frame, webcam, feedVideo);
-      this.hud.update(feedVideo);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -242,8 +353,9 @@ export class App {
     if (this.resizeHandler) {
       window.removeEventListener('resize', this.resizeHandler);
     }
+    this.unsubscribeSync?.();
     this.gridTex?.dispose();
-    this.hud.dispose();
+    this.calibration.dispose();
     this.videoQueue.dispose();
     this.audio.dispose();
     this.interaction.reset();

@@ -44,6 +44,9 @@ app.use('/admin', createAdminRouter());
 if (isProd) {
   const dist = path.join(root, 'dist');
   app.use(express.static(dist));
+  app.get(['/calibration', '/calibration.html'], (_req, res) => {
+    res.sendFile(path.join(dist, 'calibration.html'));
+  });
   app.get('*', (_req, res) => {
     res.sendFile(path.join(dist, 'index.html'));
   });

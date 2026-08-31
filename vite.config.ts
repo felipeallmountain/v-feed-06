@@ -100,5 +100,11 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
     target: 'es2022',
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        calibration: path.resolve(__dirname, 'calibration.html'),
+      },
+    },
   },
 });
