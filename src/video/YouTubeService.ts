@@ -13,6 +13,35 @@ export interface PlaylistItem {
   streamUrl?: string;
 }
 
+export interface ReplenishmentStatusResponse {
+  enabled: boolean;
+  lowWatermarkVideos: number;
+  currentVideos: number;
+  isBelowWatermark: boolean;
+  lastReplenishedAt: string | null;
+  cooldownMinutes: number;
+  cooldownRemainingSec: number;
+  isEligible: boolean;
+  trickleHours: number;
+}
+
+export interface StorageStatusResponse {
+  totalBytes: number;
+  totalFormatted: string;
+  maxBytes: number;
+  maxMb: number;
+  usagePercent: number;
+  videoCount: number;
+  maxVideos: number;
+  orphanedFilesCount: number;
+  orphanedBytes: number;
+  orphanedFormatted: string;
+  freeDiskBytes: number;
+  freeDiskFormatted: string;
+  isStorageLimited: boolean;
+  replenishment?: ReplenishmentStatusResponse;
+}
+
 export interface IngestStatusResponse {
   isIngesting: boolean;
   activeDownload: {
@@ -28,6 +57,7 @@ export interface IngestStatusResponse {
   readyCount: number;
   lastSyncedAt: string | null;
   lastError: string | null;
+  storage?: StorageStatusResponse;
 }
 
 export interface PlaylistResponse {
@@ -140,5 +170,65 @@ export class YouTubeService {
       throw new Error(`Delete video failed: ${res.status}`);
     }
     return await res.json();
+  }
+
+  async fetchStorageStatus(): Promise<StorageStatusResponse | null> {
+    try {
+      const res = await fetch('/api/storage');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.storage || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async cleanTempFiles(): Promise<{ ok: boolean; cleanedFiles: string[]; reclaimedBytes: number; reclaimedFormatted: string } | null> {
+    try {
+      const res = await fetch('/api/storage/clean-temp', { method: 'POST' });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async pruneStorage(options?: {
+    targetMaxMb?: number;
+    maxVideos?: number;
+    force?: boolean;
+  }): Promise<{ ok: boolean; prunedVideos: any[]; reclaimedBytes: number; reclaimedFormatted: string } | null> {
+    try {
+      const res = await fetch('/api/storage/prune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(options || {}),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async triggerReplenish(force = false): Promise<{
+    ok: boolean;
+    triggered: boolean;
+    reason: string;
+    message: string;
+    details?: { queued: number; alreadyCached: number; totalFound: number };
+    storage?: StorageStatusResponse;
+  } | null> {
+    try {
+      const res = await fetch('/api/storage/replenish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 }

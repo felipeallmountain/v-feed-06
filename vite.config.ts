@@ -68,8 +68,23 @@ function calibrationVitePlugin(): Plugin {
   };
 }
 
+function cleanDistFallbackVideosPlugin(): Plugin {
+  return {
+    name: 'clean-dist-fallback-videos',
+    closeBundle() {
+      // Express serves /fallback-videos directly from public/fallback-videos.
+      // Exclude dist/fallback-videos to prevent redundant multi-hundred MB duplicates on disk.
+      const distFallback = path.resolve(__dirname, 'dist', 'fallback-videos');
+      if (fs.existsSync(distFallback)) {
+        fs.rmSync(distFallback, { recursive: true, force: true });
+        console.log('[v-feed vite] Removed redundant dist/fallback-videos to save disk space.');
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [calibrationVitePlugin()],
+  plugins: [calibrationVitePlugin(), cleanDistFallbackVideosPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

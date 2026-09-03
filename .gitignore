@@ -4,3 +4,17 @@ dist
 .DS_Store
 *.log
 .vite
+
+# Video Cache & Fallback Media
+public/fallback-videos/*
+!public/fallback-videos/.gitkeep
+*.mp4
+*.webm
+*.mov
+*.mkv
+*.part
+
+# YouTube API & Quota Local Caches
+config/youtube-api-cache.json
+config/quota-tracker.json
+

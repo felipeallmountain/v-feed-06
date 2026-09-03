@@ -54,6 +54,64 @@ export function createPlaylistRouter(
   });
 
   /**
+   * Returns fallback folder disk usage, limits, and host filesystem space.
+   */
+  router.get('/storage', (_req, res) => {
+    try {
+      res.json({ ok: true, storage: ingestService.getStorageUsage() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Removes incomplete/orphaned temporary download files.
+   */
+  router.post('/storage/clean-temp', (_req, res) => {
+    try {
+      const result = ingestService.cleanTempFiles();
+      res.json({ ok: true, ...result, storage: ingestService.getStorageUsage() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Prunes videos to respect storage boundaries (evicting oldest YouTube downloads first).
+   */
+  router.post('/storage/prune', (req, res) => {
+    try {
+      const { targetMaxMb, maxVideos, force } = req.body || {};
+      const targetMaxBytes = targetMaxMb ? Number(targetMaxMb) * 1024 * 1024 : undefined;
+      const result = ingestService.pruneStorage({
+        targetMaxBytes,
+        maxVideos: maxVideos ? Number(maxVideos) : undefined,
+        force: Boolean(force),
+      });
+      res.json({ ok: true, ...result, storage: ingestService.getStorageUsage() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
+   * Triggers or evaluates safe low-watermark replenishment.
+   */
+  router.post('/storage/replenish', async (req, res) => {
+    try {
+      const { force } = req.body || {};
+      const result = await ingestService.checkAndReplenishIfNeeded('api', Boolean(force));
+      res.json({ ok: true, ...result, storage: ingestService.getStorageUsage() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  /**
    * Returns live YouTube API quota usage and protection status.
    */
   router.get('/quota', (_req, res) => {

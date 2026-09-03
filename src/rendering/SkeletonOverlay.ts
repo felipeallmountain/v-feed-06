@@ -508,6 +508,144 @@ export class SkeletonOverlay {
     this.ctx.restore();
   }
 
+  /**
+   * Draws high-contrast corner pinning target guides, bullseye markers, crosshairs,
+   * dashed screen bounds, and corner labels (BL, BR, TR, TL) for all 6 screens.
+   */
+  private drawCornerTargetGuides(w: number, h: number): void {
+    const store = useAppStore.getState();
+    const sh = store.shaders;
+
+    const uvCorners = computeAllScreenCorners(
+      sh.bezelWidthX,
+      sh.bezelWidthY,
+      sh.bezelOuter,
+      sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
+    );
+
+    const cornerNames: Array<'BL' | 'BR' | 'TR' | 'TL'> = ['BL', 'BR', 'TR', 'TL'];
+
+    this.ctx.save();
+
+    for (let i = 0; i < 6; i++) {
+      const base = i * 4;
+      const uvBL = uvCorners[base + 0];
+      const uvBR = uvCorners[base + 1];
+      const uvTR = uvCorners[base + 2];
+      const uvTL = uvCorners[base + 3];
+
+      if (!uvBL || !uvBR || !uvTR || !uvTL) continue;
+
+      const pBL = { x: uvBL.x * w, y: (1.0 - uvBL.y) * h };
+      const pBR = { x: uvBR.x * w, y: (1.0 - uvBR.y) * h };
+      const pTR = { x: uvTR.x * w, y: (1.0 - uvTR.y) * h };
+      const pTL = { x: uvTL.x * w, y: (1.0 - uvTL.y) * h };
+
+      // 1. Pinned quad perimeter dashed boundary
+      this.ctx.strokeStyle = 'rgba(0, 229, 255, 0.75)';
+      this.ctx.lineWidth = Math.max(1.5, 2.0 * (w / 1080));
+      this.ctx.setLineDash([8, 6]);
+      this.ctx.beginPath();
+      this.ctx.moveTo(pTL.x, pTL.y);
+      this.ctx.lineTo(pTR.x, pTR.y);
+      this.ctx.lineTo(pBR.x, pBR.y);
+      this.ctx.lineTo(pBL.x, pBL.y);
+      this.ctx.closePath();
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+
+      // 2. Screen center crosshair & label
+      const cX = (pTL.x + pTR.x + pBR.x + pBL.x) * 0.25;
+      const cY = (pTL.y + pTR.y + pBR.y + pBL.y) * 0.25;
+      const arm = 14 * (w / 1080);
+      this.ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+      this.ctx.lineWidth = 1.2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(cX - arm, cY);
+      this.ctx.lineTo(cX + arm, cY);
+      this.ctx.moveTo(cX, cY - arm);
+      this.ctx.lineTo(cX, cY + arm);
+      this.ctx.stroke();
+
+      this.ctx.fillStyle = '#00e5ff';
+      this.ctx.font = `bold ${Math.max(11, Math.round(13 * (w / 1080)))}px monospace`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText(`CRT [0${i + 1}]`, cX, cY - arm - 8);
+
+      // 3. 4 Corner Target Guides
+      const pts = [pBL, pBR, pTR, pTL];
+      for (let c = 0; c < 4; c++) {
+        const pt = pts[c];
+        const name = cornerNames[c];
+        const crossLen = 14 * (w / 1080);
+        const ringR = 8 * (w / 1080);
+        const dotR = 3.5 * (w / 1080);
+
+        // Crosshair lines
+        this.ctx.strokeStyle = '#000000';
+        this.ctx.lineWidth = 3.5;
+        this.ctx.beginPath();
+        this.ctx.moveTo(pt.x - crossLen, pt.y);
+        this.ctx.lineTo(pt.x + crossLen, pt.y);
+        this.ctx.moveTo(pt.x, pt.y - crossLen);
+        this.ctx.lineTo(pt.x, pt.y + crossLen);
+        this.ctx.stroke();
+
+        this.ctx.strokeStyle = '#ffaa00';
+        this.ctx.lineWidth = 1.8;
+        this.ctx.beginPath();
+        this.ctx.moveTo(pt.x - crossLen, pt.y);
+        this.ctx.lineTo(pt.x + crossLen, pt.y);
+        this.ctx.moveTo(pt.x, pt.y - crossLen);
+        this.ctx.lineTo(pt.x, pt.y + crossLen);
+        this.ctx.stroke();
+
+        // Target outer ring
+        this.ctx.beginPath();
+        this.ctx.arc(pt.x, pt.y, ringR, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffaa00';
+        this.ctx.fill();
+        this.ctx.strokeStyle = '#000000';
+        this.ctx.lineWidth = 2;
+        this.ctx.stroke();
+
+        // Bullseye inner dot
+        this.ctx.beginPath();
+        this.ctx.arc(pt.x, pt.y, dotR, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fill();
+
+        // Corner label badge (e.g. TL, TR, BR, BL)
+        const labelOffsetY = c < 2 ? 18 : -18;
+        const labelText = `[0${i + 1}] ${name}`;
+        const fontSize = Math.max(10, Math.round(11 * (w / 1080)));
+        this.ctx.font = `bold ${fontSize}px monospace`;
+        const textW = this.ctx.measureText(labelText).width;
+
+        // Badge background box
+        this.ctx.fillStyle = 'rgba(7, 9, 14, 0.85)';
+        this.ctx.fillRect(pt.x - textW / 2 - 4, pt.y + labelOffsetY - 8, textW + 8, 16);
+        this.ctx.strokeStyle = '#ffaa00';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(pt.x - textW / 2 - 4, pt.y + labelOffsetY - 8, textW + 8, 16);
+
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(labelText, pt.x, pt.y + labelOffsetY);
+      }
+    }
+
+    this.ctx.restore();
+  }
+
   draw(frame: TrackerFrame | null): void {
     const {
       skeletonOverlay,
@@ -519,6 +657,7 @@ export class SkeletonOverlay {
       skeletonShowLines,
       skeletonShowDots,
       skeletonJitter,
+      shaders,
     } = useAppStore.getState();
 
     const w = this.canvas.width;
@@ -529,6 +668,11 @@ export class SkeletonOverlay {
 
     // 1. Draw the 6 Screen Frames (Pinned Quads, Curved CRT Tube, Custom Text)
     this.drawScreenFrames(w, h, palette);
+
+    // 2. Draw Corner Target Guides (When Show Corner Target Guides is enabled in calibration)
+    if (shaders.showCornerHandles && shaders.matrixSplit) {
+      this.drawCornerTargetGuides(w, h);
+    }
 
     // 2. Draw Skeleton if person is detected and skeleton is enabled
     if (

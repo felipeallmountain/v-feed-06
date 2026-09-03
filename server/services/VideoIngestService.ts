@@ -32,6 +32,65 @@ export interface ActiveDownloadStatus {
   eta: string;
 }
 
+export interface ReplenishmentStatus {
+  enabled: boolean;
+  lowWatermarkVideos: number;
+  currentVideos: number;
+  isBelowWatermark: boolean;
+  lastReplenishedAt: string | null;
+  cooldownMinutes: number;
+  cooldownRemainingSec: number;
+  isEligible: boolean;
+  trickleHours: number;
+}
+
+export interface StorageStatus {
+  totalBytes: number;
+  totalFormatted: string;
+  maxBytes: number;
+  maxMb: number;
+  usagePercent: number;
+  videoCount: number;
+  maxVideos: number;
+  orphanedFilesCount: number;
+  orphanedBytes: number;
+  orphanedFormatted: string;
+  freeDiskBytes: number;
+  freeDiskFormatted: string;
+  isStorageLimited: boolean;
+  replenishment?: ReplenishmentStatus;
+}
+
+export interface CleanTempResult {
+  cleanedFiles: string[];
+  reclaimedBytes: number;
+  reclaimedFormatted: string;
+}
+
+export interface PrunedVideoItem {
+  id: string;
+  title: string;
+  filename: string;
+  size: number;
+  sizeFormatted: string;
+}
+
+export interface PruneResult {
+  prunedVideos: PrunedVideoItem[];
+  reclaimedBytes: number;
+  reclaimedFormatted: string;
+  remainingBytes: number;
+  remainingFormatted: string;
+  tempCleaned: CleanTempResult;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
 export interface IngestStatus {
   isIngesting: boolean;
   activeDownload: ActiveDownloadStatus | null;
@@ -41,6 +100,7 @@ export interface IngestStatus {
   readyCount: number;
   lastSyncedAt: string | null;
   lastError: string | null;
+  storage?: StorageStatus;
 }
 
 export class VideoIngestService {
@@ -54,13 +114,18 @@ export class VideoIngestService {
   private totalInBatch = 0;
   private lastSyncedAt: string | null = null;
   private lastError: string | null = null;
+  private lastReplenishedAt = 0;
+  private trickleTimer: NodeJS.Timeout | null = null;
 
   constructor(fallbackDir: string, youtubeService?: YouTubeDataService) {
     this.fallbackDir = fallbackDir;
     this.manifestPath = path.join(fallbackDir, 'manifest.json');
     this.youtube = youtubeService || new YouTubeDataService();
     fs.mkdirSync(this.fallbackDir, { recursive: true });
+    this.cleanTempFiles();
     this.cleanAndRebuildManifest();
+    this.checkAndPruneIfNeeded(0);
+    this.startTrickleScheduler();
   }
 
   getYouTubeService(): YouTubeDataService {
@@ -68,7 +133,7 @@ export class VideoIngestService {
   }
 
   /**
-   * Get current live status of the ingestion pipeline.
+   * Get current live status of the ingestion pipeline and disk storage.
    */
   getStatus(): IngestStatus {
     const readyVideos = this.getReadyVideos();
@@ -81,7 +146,376 @@ export class VideoIngestService {
       readyCount: readyVideos.length,
       lastSyncedAt: this.lastSyncedAt,
       lastError: this.lastError,
+      storage: this.getStorageUsage(),
     };
+  }
+
+  /**
+   * Calculates exact disk usage and host filesystem space for fallback videos.
+   */
+  getStorageUsage(): StorageStatus {
+    let totalBytes = 0;
+    let orphanedBytes = 0;
+    let orphanedFilesCount = 0;
+
+    try {
+      const files = fs.readdirSync(this.fallbackDir);
+      for (const file of files) {
+        try {
+          const fullPath = path.join(this.fallbackDir, file);
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile()) {
+            totalBytes += stat.size;
+            // Check if file is temporary or orphaned partial download
+            if (
+              file.startsWith('temp_') ||
+              file.endsWith('.part') ||
+              file.endsWith('.ytdl') ||
+              file.endsWith('.tmp')
+            ) {
+              orphanedBytes += stat.size;
+              orphanedFilesCount++;
+            }
+          }
+        } catch {
+          /* ignore stat errors for single files */
+        }
+      }
+    } catch {
+      /* ignore readdir errors */
+    }
+
+    const readyVideos = this.getReadyVideos();
+    const maxMb = Number(process.env.FALLBACK_MAX_STORAGE_MB || 500);
+    const maxBytes = maxMb * 1024 * 1024;
+    const maxVideos = Number(process.env.FALLBACK_MAX_VIDEOS || 60);
+    const usagePercent = Math.min(100, Math.round((totalBytes / maxBytes) * 1000) / 10);
+
+    let freeDiskBytes = 0;
+    try {
+      if (typeof (fs as unknown as { statfsSync?: (p: string) => { bfree: number; bsize: number } }).statfsSync === 'function') {
+        const statfs = (fs as unknown as { statfsSync: (p: string) => { bfree: number; bsize: number } }).statfsSync(this.fallbackDir);
+        freeDiskBytes = statfs.bfree * statfs.bsize;
+      }
+    } catch {
+      /* statfs not supported on this platform */
+    }
+
+    return {
+      totalBytes,
+      totalFormatted: formatBytes(totalBytes),
+      maxBytes,
+      maxMb,
+      usagePercent,
+      videoCount: readyVideos.length,
+      maxVideos,
+      orphanedFilesCount,
+      orphanedBytes,
+      orphanedFormatted: formatBytes(orphanedBytes),
+      freeDiskBytes,
+      freeDiskFormatted: formatBytes(freeDiskBytes),
+      isStorageLimited: totalBytes >= maxBytes || readyVideos.length >= maxVideos,
+      replenishment: this.getReplenishmentStatus(),
+    };
+  }
+
+  /**
+   * Cleans up orphaned or incomplete downloads (*.part, temp_*).
+   */
+  cleanTempFiles(): CleanTempResult {
+    const cleanedFiles: string[] = [];
+    let reclaimedBytes = 0;
+
+    try {
+      const files = fs.readdirSync(this.fallbackDir);
+      const activeId = this.activeDownload?.id;
+
+      for (const file of files) {
+        const isTemp =
+          file.startsWith('temp_') ||
+          file.endsWith('.part') ||
+          file.endsWith('.ytdl') ||
+          file.endsWith('.tmp');
+
+        if (!isTemp) continue;
+
+        // Skip files belonging to the actively running download
+        if (activeId && file.includes(activeId)) continue;
+
+        const fullPath = path.join(this.fallbackDir, file);
+        try {
+          const stat = fs.statSync(fullPath);
+          fs.unlinkSync(fullPath);
+          cleanedFiles.push(file);
+          reclaimedBytes += stat.size;
+        } catch (err) {
+          console.warn(`[v-feed storage] Failed to unlink temp file ${file}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('[v-feed storage] Failed to scan directory for temp files:', err);
+    }
+
+    if (cleanedFiles.length > 0) {
+      console.log(
+        `[v-feed storage] Cleaned ${cleanedFiles.length} temporary file(s), reclaimed ${formatBytes(reclaimedBytes)}`,
+      );
+    }
+
+    return {
+      cleanedFiles,
+      reclaimedBytes,
+      reclaimedFormatted: formatBytes(reclaimedBytes),
+    };
+  }
+
+  /**
+   * Prunes videos when exceeding disk storage or video count caps.
+   * Evicts oldest downloaded YouTube videos first (FIFO/LRU) while preserving local videos.
+   */
+  pruneStorage(options?: {
+    targetMaxBytes?: number;
+    maxVideos?: number;
+    force?: boolean;
+  }): PruneResult {
+    const tempCleaned = this.cleanTempFiles();
+
+    const maxMb = Number(process.env.FALLBACK_MAX_STORAGE_MB || 500);
+    const configuredMaxBytes = maxMb * 1024 * 1024;
+    const maxBytes = options?.targetMaxBytes ?? configuredMaxBytes;
+    const maxVideos = options?.maxVideos ?? Number(process.env.FALLBACK_MAX_VIDEOS || 60);
+
+    const pruneThresholdRatio = Number(process.env.FALLBACK_PRUNE_THRESHOLD_RATIO || 0.80);
+    const targetBytes = Math.floor(maxBytes * pruneThresholdRatio);
+    const targetVideos = Math.floor(maxVideos * pruneThresholdRatio);
+    const protectLocal = process.env.FALLBACK_PROTECT_LOCAL !== 'false';
+
+    const manifest = this.loadManifest();
+    const currentUsage = this.getStorageUsage();
+
+    const needsPruning =
+      options?.force ||
+      currentUsage.totalBytes > maxBytes ||
+      manifest.videos.length > maxVideos;
+
+    const prunedVideos: PrunedVideoItem[] = [];
+    let reclaimedBytes = tempCleaned.reclaimedBytes;
+
+    if (needsPruning) {
+      // Prioritize candidates: protect local archives, evict oldest downloaded YouTube videos
+      const candidates = manifest.videos
+        .filter((v) => !protectLocal || v.source === 'youtube')
+        .sort((a, b) => {
+          const timeA = a.downloadedAt ? new Date(a.downloadedAt).getTime() : 0;
+          const timeB = b.downloadedAt ? new Date(b.downloadedAt).getTime() : 0;
+          return timeA - timeB;
+        });
+
+      for (const video of candidates) {
+        const remainingEstimatedBytes = currentUsage.totalBytes - (reclaimedBytes - tempCleaned.reclaimedBytes);
+        const remainingEstimatedCount = manifest.videos.length - prunedVideos.length;
+
+        if (remainingEstimatedBytes <= targetBytes && remainingEstimatedCount <= targetVideos) {
+          break;
+        }
+
+        const fullPath = path.join(this.fallbackDir, video.filename);
+        let fileSize = video.fileSize || 0;
+
+        if (fs.existsSync(fullPath)) {
+          try {
+            const stat = fs.statSync(fullPath);
+            fileSize = stat.size;
+            fs.unlinkSync(fullPath);
+          } catch (err) {
+            console.warn(`[v-feed storage] Failed to unlink video file ${video.filename}:`, err);
+          }
+        }
+
+        reclaimedBytes += fileSize;
+        prunedVideos.push({
+          id: video.id,
+          title: video.title,
+          filename: video.filename,
+          size: fileSize,
+          sizeFormatted: formatBytes(fileSize),
+        });
+      }
+
+      if (prunedVideos.length > 0) {
+        const prunedIds = new Set(prunedVideos.map((p) => p.id));
+        manifest.videos = manifest.videos.filter((v) => !prunedIds.has(v.id));
+        this.saveManifest(manifest);
+        console.log(
+          `[v-feed storage] Pruned ${prunedVideos.length} video(s), reclaimed ${formatBytes(reclaimedBytes)}`,
+        );
+      }
+    }
+
+    const remainingBytes = Math.max(0, currentUsage.totalBytes - reclaimedBytes);
+    return {
+      prunedVideos,
+      reclaimedBytes,
+      reclaimedFormatted: formatBytes(reclaimedBytes),
+      remainingBytes,
+      remainingFormatted: formatBytes(remainingBytes),
+      tempCleaned,
+    };
+  }
+
+  /**
+   * Helper check to prune storage if adding estimated bytes would exceed limit.
+   */
+  checkAndPruneIfNeeded(estimatedIncomingBytes = 15 * 1024 * 1024): PruneResult | null {
+    const storage = this.getStorageUsage();
+    if (
+      storage.totalBytes + estimatedIncomingBytes > storage.maxBytes ||
+      storage.videoCount >= storage.maxVideos
+    ) {
+      console.log(
+        `[v-feed storage] Storage threshold reached: ${storage.totalFormatted} / ${formatBytes(storage.maxBytes)} (${storage.videoCount}/${storage.maxVideos} videos). Pruning oldest videos...`,
+      );
+      return this.pruneStorage();
+    }
+    return null;
+  }
+
+  /**
+   * Evaluates current buffer capacity against low watermark and rate limits.
+   */
+  getReplenishmentStatus(): ReplenishmentStatus {
+    const readyVideos = this.getReadyVideos();
+    const enabled = process.env.FALLBACK_AUTO_REPLENISH !== 'false';
+    const lowWatermarkVideos = Number(process.env.FALLBACK_MIN_REPLENISH_VIDEOS || 20);
+    const cooldownMinutes = Number(process.env.FALLBACK_REPLENISH_COOLDOWN_MINUTES || 30);
+    const trickleHours = Number(process.env.FALLBACK_TRICKLE_HOURS || 3);
+
+    const isBelowWatermark = readyVideos.length < lowWatermarkVideos;
+    const elapsedSec = Math.floor((Date.now() - this.lastReplenishedAt) / 1000);
+    const cooldownSec = cooldownMinutes * 60;
+    const cooldownRemainingSec = this.lastReplenishedAt > 0 ? Math.max(0, cooldownSec - elapsedSec) : 0;
+
+    const quotaStatus = this.youtube.getQuotaStatus();
+    const quotaOk = !quotaStatus.isProtectedMode && quotaStatus.percentage < 85;
+    const isEligible = enabled && !this.isProcessingQueue && quotaOk && cooldownRemainingSec === 0;
+
+    return {
+      enabled,
+      lowWatermarkVideos,
+      currentVideos: readyVideos.length,
+      isBelowWatermark,
+      lastReplenishedAt: this.lastReplenishedAt > 0 ? new Date(this.lastReplenishedAt).toISOString() : null,
+      cooldownMinutes,
+      cooldownRemainingSec,
+      isEligible,
+      trickleHours,
+    };
+  }
+
+  /**
+   * Safe replenishment handler with low-watermark triggers, quota protection, and cooldown circuit breakers.
+   */
+  async checkAndReplenishIfNeeded(
+    reason: 'watermark' | 'manual_deletion' | 'trickle' | 'api' = 'watermark',
+    force = false,
+  ): Promise<{
+    triggered: boolean;
+    reason: string;
+    details?: { queued: number; alreadyCached: number; totalFound: number };
+    message: string;
+  }> {
+    const status = this.getReplenishmentStatus();
+
+    if (!status.enabled && !force) {
+      return { triggered: false, reason, message: 'Auto-replenishment is disabled in settings.' };
+    }
+
+    if (this.isProcessingQueue && !force) {
+      return { triggered: false, reason, message: 'Ingestion pipeline is currently active.' };
+    }
+
+    const quotaStatus = this.youtube.getQuotaStatus();
+    if (quotaStatus.isProtectedMode || quotaStatus.percentage >= 90) {
+      return { triggered: false, reason, message: 'YouTube QuotaGuard is in protected mode. Replenishment blocked.' };
+    }
+
+    if (!force && status.cooldownRemainingSec > 0) {
+      return {
+        triggered: false,
+        reason,
+        message: `Cooldown active. ${Math.ceil(status.cooldownRemainingSec / 60)}m remaining until next replenishment.`,
+      };
+    }
+
+    const readyVideos = this.getReadyVideos();
+    const storage = this.getStorageUsage();
+
+    if (reason === 'watermark' || reason === 'manual_deletion') {
+      if (readyVideos.length >= status.lowWatermarkVideos && !force) {
+        return {
+          triggered: false,
+          reason,
+          message: `Pool is healthy (${readyVideos.length}/${status.lowWatermarkVideos} min videos). No replenishment needed.`,
+        };
+      }
+    } else if (reason === 'trickle') {
+      if (storage.usagePercent >= 85 || readyVideos.length >= storage.maxVideos) {
+        return {
+          triggered: false,
+          reason,
+          message: `Storage near capacity (${storage.totalFormatted} / ${storage.videoCount} videos). Trickle skipped.`,
+        };
+      }
+    }
+
+    this.lastReplenishedAt = Date.now();
+    const countToFetch = reason === 'trickle' ? 2 : Math.min(5, Math.max(2, status.lowWatermarkVideos - readyVideos.length));
+
+    console.log(
+      `[v-feed replenish] Replenishment triggered (reason: ${reason}, current: ${readyVideos.length} videos, fetching: ${countToFetch} candidates)`,
+    );
+
+    try {
+      const syncResult = await this.sync({ maxVideos: countToFetch });
+      return {
+        triggered: true,
+        reason,
+        details: syncResult,
+        message: `Replenishment queued: ${syncResult.queued} new video(s) (found: ${syncResult.totalFound}).`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[v-feed replenish] Replenishment sync failed:`, msg);
+      return { triggered: false, reason, message: `Replenishment failed: ${msg}` };
+    }
+  }
+
+  /**
+   * Starts background trickle scheduler to slowly rotate content when system is idle.
+   */
+  startTrickleScheduler(): void {
+    if (this.trickleTimer) {
+      clearInterval(this.trickleTimer);
+      this.trickleTimer = null;
+    }
+
+    const trickleHours = Number(process.env.FALLBACK_TRICKLE_HOURS || 3);
+    if (trickleHours <= 0) return;
+
+    const intervalMs = trickleHours * 60 * 60 * 1000;
+    this.trickleTimer = setInterval(() => {
+      void this.checkAndReplenishIfNeeded('trickle').catch((err) => {
+        console.warn('[v-feed replenish] Trickle interval error:', err);
+      });
+    }, intervalMs);
+    this.trickleTimer.unref();
+  }
+
+  stopTrickleScheduler(): void {
+    if (this.trickleTimer) {
+      clearInterval(this.trickleTimer);
+      this.trickleTimer = null;
+    }
   }
 
   /**
@@ -375,6 +809,12 @@ export class VideoIngestService {
 
     manifest.videos.splice(index, 1);
     this.saveManifest(manifest);
+
+    // Operator manual deletion: check if library fell below low watermark
+    void this.checkAndReplenishIfNeeded('manual_deletion').catch((err) => {
+      console.warn('[v-feed replenish] Auto-replenish after deletion error:', err);
+    });
+
     return true;
   }
 
@@ -401,6 +841,7 @@ export class VideoIngestService {
         const msg = err instanceof Error ? err.message : String(err);
         this.lastError = `Failed to download ${item.id} (${item.title}): ${msg}`;
         console.error(`[v-feed] Download error for ${item.id}:`, err);
+        this.cleanTempFiles();
       }
     }
 
@@ -416,6 +857,9 @@ export class VideoIngestService {
    * Executes yt-dlp to download and transcode video into MP4 format.
    */
   private async downloadVideoItem(meta: YouTubeVideoMeta): Promise<IngestedVideo> {
+    // Proactively verify and prune storage before initiating download
+    this.checkAndPruneIfNeeded(15 * 1024 * 1024);
+
     const filename = `yt_${meta.id}.mp4`;
     const targetPath = path.join(this.fallbackDir, filename);
     const tempTarget = path.join(this.fallbackDir, `temp_${meta.id}.%(ext)s`);

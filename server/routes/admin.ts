@@ -262,6 +262,39 @@ const ADMIN_HTML = `<!DOCTYPE html>
       </div>
       <div class="status-box" id="quota-log">Persistent 6h disk cache active.</div>
     </div>
+
+    <!-- Fallback Videos Storage Guard & Disk Management -->
+    <div class="card">
+      <h2>
+        <span>Fallback Storage Guard</span>
+        <span id="storage-badge" class="badge">Measuring...</span>
+      </h2>
+      <div id="storage-size-text" style="font-size: 0.85rem; margin-bottom: 0.35rem;">
+        Storage Used: -- / -- (0%)
+      </div>
+      <div class="progress-bar-wrap">
+        <div id="storage-progress" class="progress-bar-fill" style="background: linear-gradient(90deg, var(--cyan), var(--primary));"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);" id="storage-breakdown">
+        <span>Videos: 0 / 60 max</span>
+        <span>Temp Files: 0 (0 B)</span>
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;" id="host-disk-text">
+        Host Drive Free: --
+      </div>
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;" id="replenish-status-text">
+        Replenishment: Monitoring pool buffer...
+      </div>
+      <div class="btn-group" style="margin-top: 0.75rem;">
+        <button id="btn-check-replenish">Check & Replenish</button>
+        <button id="btn-clean-temp">Clean Temp Files</button>
+        <button id="btn-prune-storage" class="danger">Prune Oldest to Limit</button>
+      </div>
+      <div class="status-box" id="storage-log">Automated FIFO retention & Low-Watermark protection active.</div>
+    </div>
+  </div>
+
+  <div class="grid">
     <!-- Automated Sync -->
     <div class="card">
       <h2>Automated Sync (Search or Playlist)</h2>
@@ -640,10 +673,121 @@ const ADMIN_HTML = `<!DOCTYPE html>
       }
     }
 
+    // Storage Guard Elements
+    const storageBadge = document.getElementById('storage-badge');
+    const storageSizeText = document.getElementById('storage-size-text');
+    const storageProgress = document.getElementById('storage-progress');
+    const storageBreakdown = document.getElementById('storage-breakdown');
+    const hostDiskText = document.getElementById('host-disk-text');
+    const replenishStatusText = document.getElementById('replenish-status-text');
+    const storageLog = document.getElementById('storage-log');
+    const btnCleanTemp = document.getElementById('btn-clean-temp');
+    const btnPruneStorage = document.getElementById('btn-prune-storage');
+    const btnCheckReplenish = document.getElementById('btn-check-replenish');
+
+    btnCheckReplenish.addEventListener('click', async () => {
+      try {
+        storageLog.textContent = 'Checking replenishment requirements...';
+        const res = await fetch('/api/storage/replenish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: false })
+        });
+        const d = await res.json();
+        if (d.ok) {
+          storageLog.textContent = (d.triggered ? '✓ ' : 'ℹ ') + (d.message || 'Checked');
+          pollStorageStatus();
+          fetchLibrary();
+        } else {
+          storageLog.textContent = '✗ Replenish failed: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        alert('Check & replenish failed: ' + err.message);
+      }
+    });
+
+    btnCleanTemp.addEventListener('click', async () => {
+      try {
+        storageLog.textContent = 'Cleaning temporary download files...';
+        const res = await fetch('/api/storage/clean-temp', { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+          storageLog.textContent = '✓ Cleaned ' + (d.cleanedFiles?.length || 0) + ' temp file(s), reclaimed ' + (d.reclaimedFormatted || '0 B');
+          pollStorageStatus();
+        } else {
+          storageLog.textContent = '✗ Clean failed: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        alert('Clean temp files failed: ' + err.message);
+      }
+    });
+
+    btnPruneStorage.addEventListener('click', async () => {
+      if (!confirm('Prune oldest YouTube videos down to storage limit headroom? (Local files are protected)')) return;
+      try {
+        storageLog.textContent = 'Pruning oldest fallback videos...';
+        const res = await fetch('/api/storage/prune', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true })
+        });
+        const d = await res.json();
+        if (d.ok) {
+          storageLog.textContent = '✓ Pruned ' + (d.prunedVideos?.length || 0) + ' video(s), reclaimed ' + (d.reclaimedFormatted || '0 B');
+          pollStorageStatus();
+          fetchLibrary();
+        } else {
+          storageLog.textContent = '✗ Prune failed: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        alert('Prune failed: ' + err.message);
+      }
+    });
+
+    async function pollStorageStatus() {
+      try {
+        const res = await fetch('/api/storage');
+        if (!res.ok) return;
+        const { storage: s } = await res.json();
+        if (!s) return;
+
+        storageSizeText.textContent = 'Storage Used: ' + s.totalFormatted + ' / ' + s.maxMb + ' MB (' + s.usagePercent + '%)';
+        storageProgress.style.width = s.usagePercent + '%';
+
+        if (s.usagePercent >= 85 || s.isStorageLimited) {
+          storageProgress.style.background = 'linear-gradient(90deg, #ffaa00, #ff0055)';
+          storageBadge.textContent = s.isStorageLimited ? 'Limit Exceeded' : 'Near Cap';
+          storageBadge.className = 'badge yt';
+        } else {
+          storageProgress.style.background = 'linear-gradient(90deg, var(--cyan), var(--primary))';
+          storageBadge.textContent = 'OK (Healthy)';
+          storageBadge.className = 'badge';
+        }
+
+        storageBreakdown.innerHTML = '<span>Videos: ' + s.videoCount + ' / ' + s.maxVideos + ' max</span>' +
+          '<span>Temp Files: ' + s.orphanedFilesCount + ' (' + s.orphanedFormatted + ')</span>';
+
+        hostDiskText.textContent = 'Host Drive Free: ' + s.freeDiskFormatted;
+
+        if (s.replenishment) {
+          const r = s.replenishment;
+          if (r.isBelowWatermark) {
+            replenishStatusText.innerHTML = '<span style="color:var(--accent);">⚠ Low Buffer: ' + r.currentVideos + ' / ' + r.lowWatermarkVideos + ' min videos (Auto-Replenish active)</span>';
+          } else {
+            replenishStatusText.innerHTML = '<span style="color:var(--text-muted);">Replenishment: Buffer Healthy (' + r.currentVideos + ' / ' + r.lowWatermarkVideos + ' min videos · trickle every ' + r.trickleHours + 'h)</span>';
+          }
+        }
+      } catch (err) {
+        /* ignore */
+      }
+    }
+
     fetchLibrary();
     pollQuotaStatus();
+    pollStorageStatus();
     setInterval(pollIngestStatus, 1500);
     setInterval(pollQuotaStatus, 3000);
+    setInterval(pollStorageStatus, 3000);
     setInterval(fetchLibrary, 10000);
   </script>
 </body>

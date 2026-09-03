@@ -105,6 +105,8 @@ export class CalibrationConsole {
     blX: 0,
     blY: 0,
   };
+  private showHandlesCtrl?: ReturnType<GUI['add']>;
+  private selectedScreenCtrl?: ReturnType<GUI['add']>;
   private offXCtrl?: ReturnType<GUI['add']>;
   private offYCtrl?: ReturnType<GUI['add']>;
   private rotCtrl?: ReturnType<GUI['add']>;
@@ -241,7 +243,7 @@ export class CalibrationConsole {
     if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
 
     if (this.shaderBindings) {
-      Object.assign(this.shaderBindings, store.shaders);
+      Object.assign(this.shaderBindings, useAppStore.getState().shaders);
     }
     this.updateCornerControllers();
     this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
@@ -472,7 +474,7 @@ export class CalibrationConsole {
         .name('Title')
         .onChange((v: string) => {
           store.setScreenCustomLabel(i, v);
-          this.broadcastPatch({ frames: store.frames });
+          this.broadcastPatch({ frames: useAppStore.getState().frames });
           this.persist();
         });
       scrFolder
@@ -480,7 +482,7 @@ export class CalibrationConsole {
         .name('Subtitle')
         .onChange((v: string) => {
           store.setScreenCustomLabel(i, labelBindings[i].title, v);
-          this.broadcastPatch({ frames: store.frames });
+          this.broadcastPatch({ frames: useAppStore.getState().frames });
           this.persist();
         });
     }
@@ -490,12 +492,13 @@ export class CalibrationConsole {
         {
           resetLabels: () => {
             store.resetScreenLabels();
+            const freshFrames = useAppStore.getState().frames;
             for (let i = 0; i < 6; i++) {
-              labelBindings[i].title = store.frames.customLabels[i];
-              labelBindings[i].subtitle = store.frames.customSubtitles[i];
+              labelBindings[i].title = freshFrames.customLabels[i];
+              labelBindings[i].subtitle = freshFrames.customSubtitles[i];
             }
             textFolder.controllersRecursive().forEach((c) => c.updateDisplay());
-            this.broadcastPatch({ frames: store.frames });
+            this.broadcastPatch({ frames: freshFrames });
             this.persist();
           },
         },
@@ -521,7 +524,7 @@ export class CalibrationConsole {
       '270° (Counter-CW)': 270,
     };
 
-    cornerFolder
+    this.showHandlesCtrl = cornerFolder
       .add(this.cornerState, 'showHandles')
       .name('Show Corner Target Guides')
       .onChange((v: boolean) => {
@@ -535,7 +538,7 @@ export class CalibrationConsole {
       .name('Screen X Offset')
       .onChange((v: number) => {
         store.setScreenOffset(this.cornerState.selectedScreen, 0, v);
-        this.broadcastPatch({ shaders: { screenOffsets: store.shaders.screenOffsets } });
+        this.broadcastPatch({ shaders: { screenOffsets: useAppStore.getState().shaders.screenOffsets } });
         this.persist();
       });
 
@@ -544,7 +547,7 @@ export class CalibrationConsole {
       .name('Screen Y Offset')
       .onChange((v: number) => {
         store.setScreenOffset(this.cornerState.selectedScreen, 1, v);
-        this.broadcastPatch({ shaders: { screenOffsets: store.shaders.screenOffsets } });
+        this.broadcastPatch({ shaders: { screenOffsets: useAppStore.getState().shaders.screenOffsets } });
         this.persist();
       });
 
@@ -553,7 +556,7 @@ export class CalibrationConsole {
       .name('Rotation (90° Steps)')
       .onChange((v: number) => {
         store.setScreenRotation(this.cornerState.selectedScreen, v);
-        this.broadcastPatch({ shaders: { screenFlips: store.shaders.screenFlips } });
+        this.broadcastPatch({ shaders: { screenFlips: useAppStore.getState().shaders.screenFlips } });
         this.persist();
       });
 
@@ -562,7 +565,7 @@ export class CalibrationConsole {
       .name('Fine Angle (°)')
       .onChange((v: number) => {
         store.setScreenFineRotation(this.cornerState.selectedScreen, v);
-        this.broadcastPatch({ shaders: { screenFlips: store.shaders.screenFlips } });
+        this.broadcastPatch({ shaders: { screenFlips: useAppStore.getState().shaders.screenFlips } });
         this.persist();
       });
 
@@ -571,7 +574,7 @@ export class CalibrationConsole {
       .name('Flip Horizontally (Mirror X)')
       .onChange((v: boolean) => {
         store.setScreenFlip(this.cornerState.selectedScreen, 'h', v);
-        this.broadcastPatch({ shaders: { screenFlips: store.shaders.screenFlips } });
+        this.broadcastPatch({ shaders: { screenFlips: useAppStore.getState().shaders.screenFlips } });
         this.persist();
       });
 
@@ -580,7 +583,7 @@ export class CalibrationConsole {
       .name('Flip Vertically (Invert Y)')
       .onChange((v: boolean) => {
         store.setScreenFlip(this.cornerState.selectedScreen, 'v', v);
-        this.broadcastPatch({ shaders: { screenFlips: store.shaders.screenFlips } });
+        this.broadcastPatch({ shaders: { screenFlips: useAppStore.getState().shaders.screenFlips } });
         this.persist();
       });
 
@@ -590,7 +593,7 @@ export class CalibrationConsole {
       .name('TL X Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'tl', 0, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
     this.tlYCtrl = tlFolder
@@ -598,7 +601,7 @@ export class CalibrationConsole {
       .name('TL Y Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'tl', 1, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
 
@@ -608,7 +611,7 @@ export class CalibrationConsole {
       .name('TR X Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'tr', 0, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
     this.trYCtrl = trFolder
@@ -616,7 +619,7 @@ export class CalibrationConsole {
       .name('TR Y Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'tr', 1, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
 
@@ -626,7 +629,7 @@ export class CalibrationConsole {
       .name('BR X Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'br', 0, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
     this.brYCtrl = brFolder
@@ -634,7 +637,7 @@ export class CalibrationConsole {
       .name('BR Y Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'br', 1, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
 
@@ -644,7 +647,7 @@ export class CalibrationConsole {
       .name('BL X Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'bl', 0, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
     this.blYCtrl = blFolder
@@ -652,16 +655,19 @@ export class CalibrationConsole {
       .name('BL Y Offset')
       .onChange((v: number) => {
         store.setCornerOffset(this.cornerState.selectedScreen, 'bl', 1, v);
-        this.broadcastPatch({ shaders: { cornerOffsets: store.shaders.cornerOffsets } });
+        this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
 
-    cornerFolder
+    this.selectedScreenCtrl = cornerFolder
       .add(this.cornerState, 'selectedScreen', screenMap)
       .name('Select Screen')
       .onChange((val: number) => {
         this.selectedScreen = val;
         this.updateCornerControllers();
+        document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach((btn) => {
+          btn.classList.toggle('active', btn.getAttribute('data-screen') === String(val));
+        });
       });
 
     cornerFolder
@@ -673,8 +679,8 @@ export class CalibrationConsole {
             this.updateCornerControllers();
             this.broadcastPatch({
               shaders: {
-                cornerOffsets: store.shaders.cornerOffsets,
-                screenOffsets: store.shaders.screenOffsets,
+                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
+                screenOffsets: useAppStore.getState().shaders.screenOffsets,
               },
             });
             this.persist();
@@ -693,8 +699,8 @@ export class CalibrationConsole {
             this.updateCornerControllers();
             this.broadcastPatch({
               shaders: {
-                cornerOffsets: store.shaders.cornerOffsets,
-                screenOffsets: store.shaders.screenOffsets,
+                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
+                screenOffsets: useAppStore.getState().shaders.screenOffsets,
               },
             });
             this.persist();
@@ -1251,6 +1257,7 @@ export class CalibrationConsole {
     const currentOffset =
       store.shaders.screenOffsets?.[this.cornerState.selectedScreen] ?? [0, 0];
 
+    this.cornerState.showHandles = store.shaders.showCornerHandles;
     this.cornerState.offsetX = currentOffset[0];
     this.cornerState.offsetY = currentOffset[1];
     this.cornerState.rotation = currentFlip.rotation || 0;
@@ -1266,6 +1273,8 @@ export class CalibrationConsole {
     this.cornerState.blX = current.bl[0];
     this.cornerState.blY = current.bl[1];
 
+    this.showHandlesCtrl?.updateDisplay();
+    this.selectedScreenCtrl?.updateDisplay();
     this.offXCtrl?.updateDisplay();
     this.offYCtrl?.updateDisplay();
     this.rotCtrl?.updateDisplay();
@@ -1325,6 +1334,9 @@ export class CalibrationConsole {
         this.selectedScreen = screenIndex;
         this.cornerState.selectedScreen = screenIndex;
         this.updateCornerControllers();
+        document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach((btn) => {
+          btn.classList.toggle('active', btn.getAttribute('data-screen') === String(screenIndex));
+        });
 
         this.activeDrag = {
           screenIndex,
@@ -1343,6 +1355,9 @@ export class CalibrationConsole {
           this.selectedScreen = screenIndex;
           this.cornerState.selectedScreen = screenIndex;
           this.updateCornerControllers();
+          document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach((btn) => {
+            btn.classList.toggle('active', btn.getAttribute('data-screen') === String(screenIndex));
+          });
         }
       }
     });
@@ -1366,7 +1381,7 @@ export class CalibrationConsole {
 
       this.broadcastPatch({
         shaders: {
-          cornerOffsets: store.shaders.cornerOffsets,
+          cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
         },
       });
     });
@@ -1571,13 +1586,14 @@ export class CalibrationConsole {
     void time;
     void rippleStrength;
     store.patchShaders({ ...rest, rippleStrength: store.shaders.rippleStrength });
+    const freshShaders = useAppStore.getState().shaders;
     if (this.shaderBindings) {
-      Object.assign(this.shaderBindings, store.shaders);
+      Object.assign(this.shaderBindings, freshShaders);
     }
-    this.curvatureCtrl?.enable(store.shaders.tubeCurve);
+    this.curvatureCtrl?.enable(freshShaders.tubeCurve);
     this.updateCornerControllers();
     this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-    this.broadcastPatch({ shaders: store.shaders });
+    this.broadcastPatch({ shaders: freshShaders });
     syncChannel.sendCommand('apply_preset', preset);
     this.persist();
     this.showToast('✓ Preset applied across all displays');
@@ -1588,7 +1604,7 @@ export class CalibrationConsole {
     if (saved.shaders) {
       store.patchShaders(saved.shaders);
       if (this.shaderBindings) {
-        Object.assign(this.shaderBindings, store.shaders);
+        Object.assign(this.shaderBindings, useAppStore.getState().shaders);
       }
     }
     if (saved.tracking) {

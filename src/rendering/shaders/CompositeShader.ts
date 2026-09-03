@@ -256,6 +256,16 @@ void main() {
   }
 
   if (outsideTube) {
+    if (uShowCornerHandles > 0.5) {
+      float dCorner = min(
+        min(distance(localUv, vec2(0.0, 0.0)), distance(localUv, vec2(1.0, 0.0))),
+        min(distance(localUv, vec2(1.0, 1.0)), distance(localUv, vec2(0.0, 1.0)))
+      );
+      if (dCorner < 0.05) {
+        gl_FragColor = vec4(1.0, 0.75, 0.0, 1.0);
+        return;
+      }
+    }
     if (uBezelChassis > 0.5) {
       float grain = hash21(uv * uResolution * 0.25) * 0.018;
       vec3 casing = vec3(0.028, 0.030, 0.035) + vec3(grain);
