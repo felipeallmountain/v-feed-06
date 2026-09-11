@@ -347,9 +347,6 @@ export class SkeletonOverlay {
         : 0;
 
     for (let i = 0; i < 6; i++) {
-      const tag = frames.customLabels[i] || `CRT [0${i + 1}]`;
-      const sub = frames.customSubtitles[i] || '';
-
       // Point order in computeAllScreenCorners: 0=BL, 1=BR, 2=TR, 3=TL in WebGL UV (y=0 bottom)
       const uvBL = uvCorners[i * 4 + 0];
       const uvBR = uvCorners[i * 4 + 1];
@@ -473,36 +470,295 @@ export class SkeletonOverlay {
         this.ctx.lineTo(center.x + vx, center.y + vy);
         this.ctx.stroke();
       }
+    }
 
-      // 4. Draw Custom Screen Labels & Badges
-      if (frames.showLabels) {
-        const fontSize = Math.max(10, Math.round(11 * (w / 1080)));
-        this.ctx.font = `bold ${fontSize}px monospace`;
+    this.ctx.restore();
+  }
 
-        const textPos = this.getCurvedQuadPoint(0.04, 0.04, quad, inset, effectiveCurvature);
+  /**
+   * Draws per-screen antenna telemetry metrics (CRT title, ANT%, N%, and signal bar)
+   * pinned to each monitor's top-left corner following keystone and rotation.
+   * Styled like the clean text badges with individual translucent pills and no outer card container.
+   */
+  private drawAntennaMetrics(
+    w: number,
+    h: number,
+    palette?: { stroke: string; glow: string },
+  ): void {
+    const store = useAppStore.getState();
+    const sh = store.shaders;
+    const frames = store.frames;
+    if (!sh.matrixSplit) return;
 
-        // Compute angle along the top edge of the quad
-        const edgeDx = quad.tr.x - quad.tl.x;
-        const edgeDy = quad.tr.y - quad.tl.y;
-        const textAngle = Math.atan2(edgeDy, edgeDx);
+    const uvCorners = computeAllScreenCorners(
+      sh.bezelWidthX,
+      sh.bezelWidthY,
+      sh.bezelOuter,
+      sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
+    );
 
-        const fullText = sub && sub.trim().length > 0 ? `${tag} · ${sub}` : tag;
-        const textWidth = this.ctx.measureText(fullText).width;
+    const scale = Math.max(0.65, Math.min(1.5, w / 1080));
+    const titleSize = Math.max(10, Math.round(11 * scale));
+    const metricSize = Math.max(9, Math.round(10 * scale));
 
-        this.ctx.save();
-        this.ctx.translate(textPos.x, textPos.y);
-        this.ctx.rotate(textAngle);
+    const inset = Math.max(0.005, frames.inset);
+    const effectiveCurvature =
+      frames.followTubeCurvature && sh.tubeCurve
+        ? sh.curvature * frames.curvatureScale
+        : 0;
 
-        // Background pill badge for high contrast
-        this.ctx.save();
-        this.ctx.globalAlpha = Math.min(frames.opacity * 0.85, 0.9);
-        this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
-        this.ctx.fillRect(-4, -2, textWidth + 8, fontSize + 6);
-        this.ctx.restore();
+    this.ctx.save();
+    this.ctx.textAlign = 'left';
+    this.ctx.textBaseline = 'alphabetic';
 
-        this.ctx.fillText(fullText, 0, fontSize);
-        this.ctx.restore();
+    for (let i = 0; i < 6; i++) {
+      const base = i * 4;
+      const uvBL = uvCorners[base + 0];
+      const uvBR = uvCorners[base + 1];
+      const uvTR = uvCorners[base + 2];
+      const uvTL = uvCorners[base + 3];
+
+      if (!uvBL || !uvBR || !uvTR || !uvTL) continue;
+
+      const quad: QuadPoints = {
+        tl: { x: uvTL.x * w, y: (1.0 - uvTL.y) * h },
+        tr: { x: uvTR.x * w, y: (1.0 - uvTR.y) * h },
+        br: { x: uvBR.x * w, y: (1.0 - uvBR.y) * h },
+        bl: { x: uvBL.x * w, y: (1.0 - uvBL.y) * h },
+      };
+
+      const lockVal = sh.screenSignalLocks?.[i] ?? sh.signalLock ?? 0;
+      const noiseVal = sh.screenNoiseGains?.[i] ?? sh.noiseGain ?? 1;
+      const lockPct = Math.round(Math.max(0, Math.min(1, lockVal)) * 100);
+      const noisePct = Math.round(Math.max(0, Math.min(1, noiseVal)) * 100);
+
+      const lockColor =
+        lockPct > 70 ? '#3ddc97' : lockPct > 30 ? '#ffb703' : '#ff3366';
+
+      const tag = frames.customLabels[i] || `CRT [0${i + 1}]`;
+      const metricText = `ANT:${lockPct}% N:${noisePct}%`;
+
+      // Top edge vector & orientation
+      const edgeDx = quad.tr.x - quad.tl.x;
+      const edgeDy = quad.tr.y - quad.tl.y;
+      const textAngle = Math.atan2(edgeDy, edgeDx);
+
+      // Top-left quad anchor (curved point matching screen frame curvature & inset)
+      const textPos = this.getCurvedQuadPoint(0.04, 0.04, quad, inset, effectiveCurvature);
+
+      this.ctx.font = `bold ${titleSize}px monospace`;
+      const tagW = this.ctx.measureText(tag).width;
+
+      this.ctx.font = `bold ${metricSize}px monospace`;
+      const metricW = this.ctx.measureText(metricText).width;
+
+      const barW = Math.max(tagW, metricW);
+      const barH = Math.max(3, Math.round(3.5 * scale));
+
+      this.ctx.save();
+      this.ctx.translate(textPos.x, textPos.y);
+      this.ctx.rotate(textAngle);
+
+      const bgAlpha = Math.min(frames.opacity * 0.85, 0.9);
+
+      // Line 1: CRT Name Badge Pill (Top text)
+      this.ctx.save();
+      this.ctx.shadowBlur = 0;
+      this.ctx.globalAlpha = bgAlpha;
+      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+      this.ctx.fillRect(-4, -2, tagW + 8, titleSize + 6);
+      this.ctx.restore();
+
+      this.ctx.fillStyle = palette?.stroke || '#ffaa00';
+      this.ctx.font = `bold ${titleSize}px monospace`;
+      this.ctx.fillText(tag, 0, titleSize);
+
+      // Line 2: ANT% N% Badge Pill
+      const line2Y = titleSize + 8;
+      this.ctx.save();
+      this.ctx.shadowBlur = 0;
+      this.ctx.globalAlpha = bgAlpha;
+      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+      this.ctx.fillRect(-4, line2Y - 2, metricW + 8, metricSize + 6);
+      this.ctx.restore();
+
+      this.ctx.fillStyle = lockColor;
+      this.ctx.font = `bold ${metricSize}px monospace`;
+      this.ctx.fillText(metricText, 0, line2Y + metricSize);
+
+      // Line 3: Signal Reception Bar (Track + Fill)
+      const barY = line2Y + metricSize + 7;
+      this.ctx.save();
+      this.ctx.shadowBlur = 0;
+      this.ctx.globalAlpha = bgAlpha;
+      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+      this.ctx.fillRect(-4, barY, barW + 8, barH);
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      this.ctx.fillRect(-4, barY, barW + 8, barH);
+      this.ctx.restore();
+
+      const fillW = ((barW + 8) * lockPct) / 100;
+      if (fillW > 0) {
+        this.ctx.fillStyle = lockColor;
+        this.ctx.fillRect(-4, barY, fillW, barH);
       }
+
+      this.ctx.restore();
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Draws the bottom query message banner (▶ LIVE FEED badge and ⚡ QUERY: "...")
+   * pinned to the bottom-left corner of each enabled CRT monitor, following
+   * keystone, rotation, and tube curvature.
+   */
+  private drawScreenQueryMessages(
+    w: number,
+    h: number,
+    _palette?: { stroke: string; glow: string },
+  ): void {
+    const store = useAppStore.getState();
+    const sh = store.shaders;
+    const frames = store.frames;
+    if (!sh.matrixSplit || !frames.showQueryMessage) return;
+
+    const uvCorners = computeAllScreenCorners(
+      sh.bezelWidthX,
+      sh.bezelWidthY,
+      sh.bezelOuter,
+      sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
+    );
+
+    const scale = Math.max(0.65, Math.min(1.5, w / 1080));
+    const statusFontSize = Math.max(8.5, Math.round(9.5 * scale));
+    const queryFontSize = Math.max(8.5, Math.round(9.5 * scale));
+
+    const inset = Math.max(0.005, frames.inset);
+    const effectiveCurvature =
+      frames.followTubeCurvature && sh.tubeCurve
+        ? sh.curvature * frames.curvatureScale
+        : 0;
+
+    const videoEl = document.querySelector<HTMLVideoElement>('#feed-video');
+    const isPaused = videoEl ? videoEl.paused : false;
+    const statusText = isPaused ? '⏸ PAUSED' : '▶ LIVE FEED';
+    const statusColor = isPaused ? '#f0a500' : '#3ddc97';
+
+    const inter = store.interaction;
+    const rawQuery =
+      frames.customQueryText?.trim() ||
+      inter.lastQuery ||
+      '#shorts retro public access tv host vintage 1950s black and white tv';
+    const reasonText = inter.lastTriggerReason ? ` [${inter.lastTriggerReason}]` : '';
+    const fullQueryText = `⚡ QUERY: "${rawQuery}"${reasonText}`;
+
+    this.ctx.save();
+    this.ctx.textAlign = 'left';
+    this.ctx.textBaseline = 'alphabetic';
+
+    for (let i = 0; i < 6; i++) {
+      const isVisibleOnScreen = frames.screenQueryToggles?.[i] ?? true;
+      if (!isVisibleOnScreen) continue;
+
+      const base = i * 4;
+      const uvBL = uvCorners[base + 0];
+      const uvBR = uvCorners[base + 1];
+      const uvTR = uvCorners[base + 2];
+      const uvTL = uvCorners[base + 3];
+
+      if (!uvBL || !uvBR || !uvTR || !uvTL) continue;
+
+      const quad: QuadPoints = {
+        tl: { x: uvTL.x * w, y: (1.0 - uvTL.y) * h },
+        tr: { x: uvTR.x * w, y: (1.0 - uvTR.y) * h },
+        br: { x: uvBR.x * w, y: (1.0 - uvBR.y) * h },
+        bl: { x: uvBL.x * w, y: (1.0 - uvBL.y) * h },
+      };
+
+      // Bottom edge vector & orientation
+      const edgeDx = quad.br.x - quad.bl.x;
+      const edgeDy = quad.br.y - quad.bl.y;
+      const screenW = Math.hypot(edgeDx, edgeDy);
+      const textAngle = Math.atan2(edgeDy, edgeDx);
+
+      // Bottom-left quad anchor (curved point matching screen frame curvature & inset)
+      // vNorm = 0.90 if showLiveFeedBadge (two lines) else 0.93 (single line)
+      const vNorm = frames.showLiveFeedBadge ? 0.90 : 0.93;
+      const pos = this.getCurvedQuadPoint(0.04, vNorm, quad, inset, effectiveCurvature);
+
+      this.ctx.save();
+      this.ctx.translate(pos.x, pos.y);
+      this.ctx.rotate(textAngle);
+
+      const bgAlpha = Math.min(frames.opacity * 0.85, 0.9);
+      const maxW = Math.max(80, screenW * 0.92);
+
+      let curY = 0;
+
+      // Line 1: ▶ LIVE FEED
+      if (frames.showLiveFeedBadge) {
+        this.ctx.font = `bold ${statusFontSize}px monospace`;
+        const statusW = this.ctx.measureText(statusText).width;
+
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+        this.ctx.globalAlpha = bgAlpha;
+        this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+        this.ctx.fillRect(-4, -2, statusW + 8, statusFontSize + 6);
+        this.ctx.restore();
+
+        this.ctx.fillStyle = statusColor;
+        this.ctx.font = `bold ${statusFontSize}px monospace`;
+        this.ctx.fillText(statusText, 0, statusFontSize);
+
+        curY += statusFontSize + 7;
+      }
+
+      // Line 2: ⚡ QUERY: "..."
+      this.ctx.font = `bold ${queryFontSize}px monospace`;
+      let textToRender = fullQueryText;
+      if (this.ctx.measureText(textToRender).width > maxW) {
+        let lo = 0;
+        let hi = textToRender.length;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (this.ctx.measureText(textToRender.slice(0, mid) + '…').width <= maxW) {
+            lo = mid;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        textToRender = textToRender.slice(0, lo) + '…';
+      }
+
+      const queryW = this.ctx.measureText(textToRender).width;
+
+      this.ctx.save();
+      this.ctx.shadowBlur = 0;
+      this.ctx.globalAlpha = bgAlpha;
+      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.75)';
+      this.ctx.fillRect(-4, curY - 2, queryW + 8, queryFontSize + 6);
+      this.ctx.restore();
+
+      this.ctx.fillStyle = '#3ddc97';
+      this.ctx.font = `bold ${queryFontSize}px monospace`;
+      this.ctx.fillText(textToRender, 0, curY + queryFontSize);
+
+      this.ctx.restore();
     }
 
     this.ctx.restore();
@@ -669,7 +925,17 @@ export class SkeletonOverlay {
     // 1. Draw the 6 Screen Frames (Pinned Quads, Curved CRT Tube, Custom Text)
     this.drawScreenFrames(w, h, palette);
 
-    // 2. Draw Corner Target Guides (When Show Corner Target Guides is enabled in calibration)
+    // 2. Draw Antenna Metrics on the 6 CRT screens (ANT%, N%, bar)
+    if (useAppStore.getState().frames.showAntennaMetrics) {
+      this.drawAntennaMetrics(w, h, palette);
+    }
+
+    // 3. Draw Bottom Query Messages on enabled CRT screens
+    if (useAppStore.getState().frames.showQueryMessage) {
+      this.drawScreenQueryMessages(w, h, palette);
+    }
+
+    // 4. Draw Corner Target Guides (When Show Corner Target Guides is enabled in calibration)
     if (shaders.showCornerHandles && shaders.matrixSplit) {
       this.drawCornerTargetGuides(w, h);
     }

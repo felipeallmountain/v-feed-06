@@ -97,7 +97,8 @@ export type OutgoingSyncMessage =
   | { type: 'REMOTE_COMMAND'; payload: RemoteCommandPayload }
   | { type: 'REQUEST_INITIAL_STATE' }
   | { type: 'SEND_INITIAL_STATE'; payload: any }
-  | { type: 'HEARTBEAT'; role: 'main' | 'operator' };
+  | { type: 'HEARTBEAT'; role: 'main' | 'operator' }
+  | { type: 'DEBUG_FRAME'; bitmap: ImageBitmap };
 
 export type SyncMessage = OutgoingSyncMessage & { sourceId: string; timestamp: number };
 
@@ -108,6 +109,7 @@ export class SyncChannel {
   private channel: BroadcastChannel | null = null;
   private sourceId = `w_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
   private listeners: Array<(msg: SyncMessage) => void> = [];
+  private debugFrameListeners: Array<(bitmap: ImageBitmap) => void> = [];
   private storageHandler: ((e: StorageEvent) => void) | null = null;
   private heartbeatInterval = 0;
   private lastPeerSeen = 0;
@@ -143,11 +145,24 @@ export class SyncChannel {
     window.addEventListener('storage', this.storageHandler);
   }
 
-  private handleIncoming(msg: SyncMessage): void {
+  private handleIncoming(msg: any): void {
     if (!msg || typeof msg !== 'object') return;
     if (msg.sourceId === this.sourceId) return; // Ignore own messages
 
     this.lastPeerSeen = Date.now();
+
+    // High-performance image bitmap frame delivery
+    if (msg.type === 'DEBUG_FRAME' && msg.bitmap) {
+      for (const listener of this.debugFrameListeners) {
+        try {
+          listener(msg.bitmap);
+        } catch (err) {
+          console.error('[SyncChannel] Debug frame listener error:', err);
+        }
+      }
+      return;
+    }
+
     for (const listener of this.listeners) {
       try {
         listener(msg);
@@ -157,7 +172,33 @@ export class SyncChannel {
     }
   }
 
+  onDebugFrame(callback: (bitmap: ImageBitmap) => void): () => void {
+    this.debugFrameListeners.push(callback);
+    return () => {
+      this.debugFrameListeners = this.debugFrameListeners.filter((cb) => cb !== callback);
+    };
+  }
+
+  sendDebugFrame(bitmap: ImageBitmap): void {
+    if (!this.channel) return;
+    try {
+      this.channel.postMessage({
+        type: 'DEBUG_FRAME',
+        bitmap,
+        sourceId: this.sourceId,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      console.warn('[SyncChannel] sendDebugFrame error:', err);
+    }
+  }
+
   send(msg: OutgoingSyncMessage): void {
+    if (msg.type === 'DEBUG_FRAME') {
+      this.sendDebugFrame(msg.bitmap);
+      return;
+    }
+
     const fullMsg: SyncMessage = {
       ...msg,
       sourceId: this.sourceId,

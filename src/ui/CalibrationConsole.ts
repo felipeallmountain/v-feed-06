@@ -124,8 +124,35 @@ export class CalibrationConsole {
 
   private unsubscribeStore: (() => void) | null = null;
   private unsubscribeSync: (() => void) | null = null;
+  private unsubscribeDebugFrame: (() => void) | null = null;
   private rafId = 0;
   private latestTelemetry: TelemetryTickPayload | null = null;
+
+  // Debug Overlay Window state & elements
+  private debugWindowEl: HTMLElement | null = null;
+  private debugCanvasEl: HTMLCanvasElement | null = null;
+  private debugCtx: CanvasRenderingContext2D | null = null;
+  private debugToggleBtn: HTMLButtonElement | null = null;
+  private debugFeedBadge: HTMLElement | null = null;
+  private debugLiveDot: HTMLElement | null = null;
+  private debugOfflineMsg: HTMLElement | null = null;
+  private debugGuiCtrl: ReturnType<GUI['add']> | null = null;
+  private debugModeGuiCtrl: ReturnType<GUI['add']> | null = null;
+  private antennaMetricsDebugCtrl?: ReturnType<GUI['add']>;
+  private antennaMetricsFrameCtrl?: ReturnType<GUI['add']>;
+  private screenTitleBindings: Array<{ title: string }> = [];
+  private queryState = {
+    showQueryMessage: true,
+    showLiveFeedBadge: true,
+    customQueryText: '',
+    screenQueryToggles: [true, true, true, true, true, true],
+  };
+  private dbgState: { debugOverlay: boolean; debugViewMode: string } = {
+    debugOverlay: false,
+    debugViewMode: 'video',
+  };
+  private isDebugCollapsed = false;
+  private lastDebugFrameReceivedTs = 0;
 
   getTelemetry(): TelemetryTickPayload | null {
     return this.latestTelemetry;
@@ -139,6 +166,7 @@ export class CalibrationConsole {
 
     this.initSync();
     this.loadSaved();
+    this.initDebugWindow();
     this.initGui(guiContainer);
     this.initCanvasInteractions();
     this.startRenderLoop();
@@ -215,6 +243,15 @@ export class CalibrationConsole {
         }
       }
     }
+
+    if (useAppStore.getState().debugOverlay && Date.now() - this.lastDebugFrameReceivedTs > 2500) {
+      if (this.debugOfflineMsg && this.debugOfflineMsg.style.display !== 'flex') {
+        this.debugOfflineMsg.style.display = 'flex';
+      }
+      if (this.debugLiveDot && !this.debugLiveDot.classList.contains('offline')) {
+        this.debugLiveDot.classList.add('offline');
+      }
+    }
   }
 
   private formatTime(sec: number): string {
@@ -227,7 +264,32 @@ export class CalibrationConsole {
   private applyIncomingStatePatch(patch: any): void {
     const store = useAppStore.getState();
     if (patch.shaders) store.patchShaders(patch.shaders);
-    if (patch.frames) store.setFrames(patch.frames);
+    if (patch.frames) {
+      store.setFrames(patch.frames);
+      if (this.screenTitleBindings.length && patch.frames.customLabels) {
+        for (let i = 0; i < 6; i++) {
+          if (patch.frames.customLabels[i] !== undefined) {
+            this.screenTitleBindings[i].title = patch.frames.customLabels[i];
+          }
+        }
+      }
+      if (patch.frames.showQueryMessage !== undefined) {
+        this.queryState.showQueryMessage = patch.frames.showQueryMessage;
+      }
+      if (patch.frames.showLiveFeedBadge !== undefined) {
+        this.queryState.showLiveFeedBadge = patch.frames.showLiveFeedBadge;
+      }
+      if (patch.frames.customQueryText !== undefined) {
+        this.queryState.customQueryText = patch.frames.customQueryText;
+      }
+      if (patch.frames.screenQueryToggles) {
+        for (let i = 0; i < 6; i++) {
+          if (patch.frames.screenQueryToggles[i] !== undefined) {
+            this.queryState.screenQueryToggles[i] = patch.frames.screenQueryToggles[i];
+          }
+        }
+      }
+    }
     if (patch.audio) store.setAudioState(patch.audio);
     if (patch.tracking) store.patchTracking(patch.tracking);
     if (patch.interaction) store.patchInteraction(patch.interaction);
@@ -241,6 +303,14 @@ export class CalibrationConsole {
     if (patch.skeletonShowLines !== undefined) store.setSkeletonShowLines(patch.skeletonShowLines);
     if (patch.skeletonShowDots !== undefined) store.setSkeletonShowDots(patch.skeletonShowDots);
     if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
+    if (patch.debugOverlay !== undefined) {
+      store.setDebugOverlay(patch.debugOverlay);
+      this.setDebugWindowVisible(patch.debugOverlay, false);
+    }
+    if (patch.debugViewMode !== undefined) {
+      store.setDebugViewMode(patch.debugViewMode);
+      this.updateDebugWindowFeedMode(patch.debugViewMode);
+    }
 
     if (this.shaderBindings) {
       Object.assign(this.shaderBindings, useAppStore.getState().shaders);
@@ -429,14 +499,141 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    framesFolder
-      .add(frm, 'showLabels')
-      .name('Show Text Badges')
+    this.antennaMetricsFrameCtrl = framesFolder
+      .add(frm, 'showAntennaMetrics')
+      .name('Antenna Metrics (ANT/N/Bar)')
       .onChange((v: boolean) => {
-        store.setFrames({ showLabels: v });
-        this.broadcastPatch({ frames: { showLabels: v } });
+        store.setFrames({ showAntennaMetrics: v });
+        this.broadcastPatch({ frames: { showAntennaMetrics: v } });
+        this.persist();
+        if (this.antennaMetricsDebugCtrl && this.antennaMetricsDebugCtrl.getValue() !== v) {
+          this.antennaMetricsDebugCtrl.setValue(v);
+        }
+      });
+
+    // Screen Titles for Antenna Metrics (CRT 01 - 06)
+    const titlesFolder = framesFolder.addFolder('Screen Titles (CRT 01 - 06)');
+    this.screenTitleBindings = Array.from({ length: 6 }, (_, i) => ({
+      title: store.frames.customLabels[i] || `CRT [0${i + 1}]`,
+    }));
+
+    const screenPosNames = ['Top-Left', 'Top-Right', 'Mid-Left', 'Mid-Right', 'Bot-Left', 'Bot-Right'];
+    for (let i = 0; i < 6; i++) {
+      titlesFolder
+        .add(this.screenTitleBindings[i], 'title')
+        .name(`Screen ${i + 1} (${screenPosNames[i]})`)
+        .onChange((v: string) => {
+          store.setScreenCustomLabel(i, v);
+          this.broadcastPatch({ frames: useAppStore.getState().frames });
+          this.persist();
+          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+        });
+    }
+
+    titlesFolder
+      .add(
+        {
+          resetTitles: () => {
+            store.resetScreenLabels();
+            const freshFrames = useAppStore.getState().frames;
+            for (let i = 0; i < 6; i++) {
+              this.screenTitleBindings[i].title = freshFrames.customLabels[i] || `CRT [0${i + 1}]`;
+            }
+            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+            this.broadcastPatch({ frames: freshFrames });
+            this.persist();
+          },
+        },
+        'resetTitles',
+      )
+      .name('Reset Default Titles');
+
+    // Bottom Query Message (CRT 01 - 06)
+    this.queryState = {
+      showQueryMessage: store.frames.showQueryMessage ?? true,
+      showLiveFeedBadge: store.frames.showLiveFeedBadge ?? true,
+      customQueryText: store.frames.customQueryText ?? '',
+      screenQueryToggles: store.frames.screenQueryToggles
+        ? [...store.frames.screenQueryToggles]
+        : [true, true, true, true, true, true],
+    };
+
+    const queryFolder = framesFolder.addFolder('Bottom Query Message (CRT 01 - 06)');
+    queryFolder
+      .add(this.queryState, 'showQueryMessage')
+      .name('Enable Query Messages')
+      .onChange((v: boolean) => {
+        store.setFrames({ showQueryMessage: v });
+        this.broadcastPatch({ frames: { showQueryMessage: v } });
+        this.persist();
+        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+      });
+
+    queryFolder
+      .add(this.queryState, 'showLiveFeedBadge')
+      .name('Show LIVE FEED Tag')
+      .onChange((v: boolean) => {
+        store.setFrames({ showLiveFeedBadge: v });
+        this.broadcastPatch({ frames: { showLiveFeedBadge: v } });
+        this.persist();
+        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+      });
+
+    queryFolder
+      .add(this.queryState, 'customQueryText')
+      .name('Custom Query Override')
+      .onChange((v: string) => {
+        store.setFrames({ customQueryText: v });
+        this.broadcastPatch({ frames: { customQueryText: v } });
         this.persist();
       });
+
+    const screenTogglesFolder = queryFolder.addFolder('Per-Screen Visibility Toggles');
+    for (let i = 0; i < 6; i++) {
+      screenTogglesFolder
+        .add(this.queryState.screenQueryToggles, i as any)
+        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
+        .onChange((v: boolean) => {
+          const next = [...this.queryState.screenQueryToggles];
+          next[i] = v;
+          store.setFrames({ screenQueryToggles: next });
+          this.broadcastPatch({ frames: { screenQueryToggles: next } });
+          this.persist();
+          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+        });
+    }
+
+    screenTogglesFolder
+      .add(
+        {
+          enableAll: () => {
+            const next = [true, true, true, true, true, true];
+            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = true;
+            store.setFrames({ screenQueryToggles: next });
+            this.broadcastPatch({ frames: { screenQueryToggles: next } });
+            this.persist();
+            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+          },
+        },
+        'enableAll',
+      )
+      .name('Enable All Screens');
+
+    screenTogglesFolder
+      .add(
+        {
+          disableAll: () => {
+            const next = [false, false, false, false, false, false];
+            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = false;
+            store.setFrames({ screenQueryToggles: next });
+            this.broadcastPatch({ frames: { screenQueryToggles: next } });
+            this.persist();
+            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+          },
+        },
+        'disableAll',
+      )
+      .name('Disable All Screens');
 
     framesFolder
       .add(frm, 'showCrosshairs')
@@ -455,56 +652,6 @@ export class CalibrationConsole {
         this.broadcastPatch({ frames: { showCornerBrackets: v } });
         this.persist();
       });
-
-    // Custom Labels
-    const textFolder = framesFolder.addFolder('Screen Text Labels (1-6)');
-    textFolder.close();
-
-    const labelBindings = Array.from({ length: 6 }, (_, i) => ({
-      title: store.frames.customLabels[i] || `CRT [0${i + 1}]`,
-      subtitle: store.frames.customSubtitles[i] || '',
-    }));
-
-    for (let i = 0; i < 6; i++) {
-      const scrNames = ['Top-Left', 'Top-Right', 'Mid-Left', 'Mid-Right', 'Bot-Left', 'Bot-Right'];
-      const scrFolder = textFolder.addFolder(`Screen ${i + 1} (${scrNames[i]})`);
-      scrFolder.close();
-      scrFolder
-        .add(labelBindings[i], 'title')
-        .name('Title')
-        .onChange((v: string) => {
-          store.setScreenCustomLabel(i, v);
-          this.broadcastPatch({ frames: useAppStore.getState().frames });
-          this.persist();
-        });
-      scrFolder
-        .add(labelBindings[i], 'subtitle')
-        .name('Subtitle')
-        .onChange((v: string) => {
-          store.setScreenCustomLabel(i, labelBindings[i].title, v);
-          this.broadcastPatch({ frames: useAppStore.getState().frames });
-          this.persist();
-        });
-    }
-
-    textFolder
-      .add(
-        {
-          resetLabels: () => {
-            store.resetScreenLabels();
-            const freshFrames = useAppStore.getState().frames;
-            for (let i = 0; i < 6; i++) {
-              labelBindings[i].title = freshFrames.customLabels[i];
-              labelBindings[i].subtitle = freshFrames.customSubtitles[i];
-            }
-            textFolder.controllersRecursive().forEach((c) => c.updateDisplay());
-            this.broadcastPatch({ frames: freshFrames });
-            this.persist();
-          },
-        },
-        'resetLabels',
-      )
-      .name('Reset Default Labels');
 
     // --- 4. CORNER PINNING, OFFSET & KEYSTONE (6 SCREENS) ---
     const cornerFolder = gui.addFolder('Corner Pinning, Offset & Keystone (6 Screens)');
@@ -1213,25 +1360,131 @@ export class CalibrationConsole {
     const debug = gui.addFolder('Performance & Stage Debug');
     this.fpsController = { fps: `${store.fps} FPS` };
     debug.add(this.fpsController, 'fps').name('Frame rate').disable();
-    const dbg = {
+    this.dbgState = {
       debugOverlay: store.debugOverlay,
       debugViewMode: store.debugViewMode || 'video',
     };
-    debug
-      .add(dbg, 'debugOverlay')
+    this.debugGuiCtrl = debug
+      .add(this.dbgState, 'debugOverlay')
       .name('Debug Overlay Window')
       .onChange((v: boolean) => {
-        store.setDebugOverlay(v);
-        this.broadcastPatch({ debugOverlay: v });
-        this.persist();
+        this.setDebugWindowVisible(v, true);
       });
-    debug
-      .add(dbg, 'debugViewMode', ['video', 'camera', 'split'])
+    this.debugModeGuiCtrl = debug
+      .add(this.dbgState, 'debugViewMode', ['video', 'camera', 'split'])
       .name('Debug Window Feed')
       .onChange((m: any) => {
         store.setDebugViewMode(m);
+        this.updateDebugWindowFeedMode(m);
         this.broadcastPatch({ debugViewMode: m });
       });
+
+    const antennaMetricsObj = {
+      showAntennaMetrics: store.frames.showAntennaMetrics,
+    };
+    this.antennaMetricsDebugCtrl = debug
+      .add(antennaMetricsObj, 'showAntennaMetrics')
+      .name('Stage Antenna Metrics (ANT/N/Bar)')
+      .onChange((v: boolean) => {
+        store.setFrames({ showAntennaMetrics: v });
+        this.broadcastPatch({ frames: { showAntennaMetrics: v } });
+        this.persist();
+        if (this.antennaMetricsFrameCtrl && this.antennaMetricsFrameCtrl.getValue() !== v) {
+          this.antennaMetricsFrameCtrl.setValue(v);
+        }
+      });
+
+    const debugTitlesFolder = debug.addFolder('Antenna Screen Titles (CRT 01 - 06)');
+    debugTitlesFolder.close();
+    for (let i = 0; i < 6; i++) {
+      debugTitlesFolder
+        .add(this.screenTitleBindings[i], 'title')
+        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
+        .onChange((v: string) => {
+          store.setScreenCustomLabel(i, v);
+          this.broadcastPatch({ frames: useAppStore.getState().frames });
+          this.persist();
+          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+        });
+    }
+
+    const debugQueryFolder = debug.addFolder('Bottom Query Message (CRT 01 - 06)');
+    debugQueryFolder.close();
+    debugQueryFolder
+      .add(this.queryState, 'showQueryMessage')
+      .name('Enable Query Messages')
+      .onChange((v: boolean) => {
+        store.setFrames({ showQueryMessage: v });
+        this.broadcastPatch({ frames: { showQueryMessage: v } });
+        this.persist();
+        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+      });
+
+    debugQueryFolder
+      .add(this.queryState, 'showLiveFeedBadge')
+      .name('Show LIVE FEED Tag')
+      .onChange((v: boolean) => {
+        store.setFrames({ showLiveFeedBadge: v });
+        this.broadcastPatch({ frames: { showLiveFeedBadge: v } });
+        this.persist();
+        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+      });
+
+    debugQueryFolder
+      .add(this.queryState, 'customQueryText')
+      .name('Custom Query Override')
+      .onChange((v: string) => {
+        store.setFrames({ customQueryText: v });
+        this.broadcastPatch({ frames: { customQueryText: v } });
+        this.persist();
+      });
+
+    const debugScreenToggles = debugQueryFolder.addFolder('Per-Screen Visibility Toggles');
+    for (let i = 0; i < 6; i++) {
+      debugScreenToggles
+        .add(this.queryState.screenQueryToggles, i as any)
+        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
+        .onChange((v: boolean) => {
+          const next = [...this.queryState.screenQueryToggles];
+          next[i] = v;
+          store.setFrames({ screenQueryToggles: next });
+          this.broadcastPatch({ frames: { screenQueryToggles: next } });
+          this.persist();
+          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+        });
+    }
+
+    debugScreenToggles
+      .add(
+        {
+          enableAll: () => {
+            const next = [true, true, true, true, true, true];
+            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = true;
+            store.setFrames({ screenQueryToggles: next });
+            this.broadcastPatch({ frames: { screenQueryToggles: next } });
+            this.persist();
+            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+          },
+        },
+        'enableAll',
+      )
+      .name('Enable All Screens');
+
+    debugScreenToggles
+      .add(
+        {
+          disableAll: () => {
+            const next = [false, false, false, false, false, false];
+            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = false;
+            store.setFrames({ screenQueryToggles: next });
+            this.broadcastPatch({ frames: { screenQueryToggles: next } });
+            this.persist();
+            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+          },
+        },
+        'disableAll',
+      )
+      .name('Disable All Screens');
 
     this.unsubscribeStore = useAppStore.subscribe((state) => {
       if (this.fpsController) {
@@ -1394,6 +1647,162 @@ export class CalibrationConsole {
     });
   }
 
+  private initDebugWindow(): void {
+    this.debugWindowEl = document.querySelector<HTMLElement>('#debug-overlay-window');
+    this.debugCanvasEl = document.querySelector<HTMLCanvasElement>('#debug-overlay-canvas');
+    this.debugCtx = this.debugCanvasEl?.getContext('2d') ?? null;
+    this.debugToggleBtn = document.querySelector<HTMLButtonElement>('#btn-toggle-debug');
+    this.debugFeedBadge = document.querySelector<HTMLElement>('#debug-feed-badge');
+    this.debugLiveDot = document.querySelector<HTMLElement>('#debug-live-dot');
+    this.debugOfflineMsg = document.querySelector<HTMLElement>('#debug-offline-msg');
+
+    const feedCycleBtn = document.querySelector<HTMLButtonElement>('#debug-feed-cycle');
+    const collapseBtn = document.querySelector<HTMLButtonElement>('#debug-collapse-btn');
+    const closeBtn = document.querySelector<HTMLButtonElement>('#debug-close-btn');
+    const dragHandle = document.querySelector<HTMLElement>('#debug-window-drag-handle');
+
+    // Subscribe to real-time debug frame stream from main stage
+    this.unsubscribeDebugFrame = syncChannel.onDebugFrame((bitmap) => {
+      this.handleDebugFrame(bitmap);
+    });
+
+    // Toolbar toggle button
+    this.debugToggleBtn?.addEventListener('click', () => {
+      const current = useAppStore.getState().debugOverlay;
+      this.setDebugWindowVisible(!current, true);
+    });
+
+    // Feed cycle button in window header
+    feedCycleBtn?.addEventListener('click', () => {
+      const modes: Array<'video' | 'camera' | 'split'> = ['video', 'camera', 'split'];
+      const curMode = useAppStore.getState().debugViewMode || 'video';
+      const nextIdx = (modes.indexOf(curMode) + 1) % modes.length;
+      const nextMode = modes[nextIdx];
+      useAppStore.getState().setDebugViewMode(nextMode);
+      this.updateDebugWindowFeedMode(nextMode);
+      this.broadcastPatch({ debugViewMode: nextMode });
+      if (this.debugModeGuiCtrl) {
+        this.dbgState.debugViewMode = nextMode;
+        this.debugModeGuiCtrl.updateDisplay();
+      }
+    });
+
+    // Collapse / Expand toggle
+    collapseBtn?.addEventListener('click', () => {
+      if (!this.debugWindowEl) return;
+      this.isDebugCollapsed = !this.isDebugCollapsed;
+      this.debugWindowEl.classList.toggle('collapsed', this.isDebugCollapsed);
+      if (collapseBtn) {
+        collapseBtn.textContent = this.isDebugCollapsed ? '+' : '−';
+      }
+    });
+
+    // Close button
+    closeBtn?.addEventListener('click', () => {
+      this.setDebugWindowVisible(false, true);
+    });
+
+    // Draggable window logic
+    if (this.debugWindowEl && dragHandle) {
+      const win = this.debugWindowEl;
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+      let initialLeft = 0;
+      let initialTop = 0;
+
+      dragHandle.addEventListener('pointerdown', (e: PointerEvent) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const rect = win.getBoundingClientRect();
+        const parentRect = win.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0 };
+        initialLeft = rect.left - parentRect.left;
+        initialTop = rect.top - parentRect.top;
+        dragHandle.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+
+      dragHandle.addEventListener('pointermove', (e: PointerEvent) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const newLeft = Math.max(0, initialLeft + dx);
+        const newTop = Math.max(0, initialTop + dy);
+        win.style.left = `${newLeft}px`;
+        win.style.top = `${newTop}px`;
+        win.style.right = 'auto';
+        win.style.bottom = 'auto';
+      });
+
+      const stopDrag = (e: PointerEvent) => {
+        if (isDragging) {
+          isDragging = false;
+          try {
+            dragHandle.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+      };
+
+      dragHandle.addEventListener('pointerup', stopDrag);
+      dragHandle.addEventListener('pointercancel', stopDrag);
+    }
+
+    // Set initial display state from store
+    const initialShow = useAppStore.getState().debugOverlay;
+    this.setDebugWindowVisible(initialShow, false);
+    const initialMode = useAppStore.getState().debugViewMode || 'video';
+    this.updateDebugWindowFeedMode(initialMode);
+  }
+
+  private handleDebugFrame(bitmap: ImageBitmap): void {
+    this.lastDebugFrameReceivedTs = Date.now();
+    if (this.debugCanvasEl && this.debugCtx) {
+      this.debugCtx.drawImage(bitmap, 0, 0, this.debugCanvasEl.width, this.debugCanvasEl.height);
+    }
+    bitmap.close();
+    if (this.debugOfflineMsg && this.debugOfflineMsg.style.display !== 'none') {
+      this.debugOfflineMsg.style.display = 'none';
+    }
+    if (this.debugLiveDot && this.debugLiveDot.classList.contains('offline')) {
+      this.debugLiveDot.classList.remove('offline');
+    }
+  }
+
+  private setDebugWindowVisible(visible: boolean, broadcast = true): void {
+    useAppStore.getState().setDebugOverlay(visible);
+    this.dbgState.debugOverlay = visible;
+
+    if (this.debugWindowEl) {
+      this.debugWindowEl.style.display = visible ? 'flex' : 'none';
+    }
+    if (this.debugToggleBtn) {
+      this.debugToggleBtn.classList.toggle('active', visible);
+    }
+    if (this.debugGuiCtrl) {
+      this.debugGuiCtrl.updateDisplay();
+    }
+    if (visible && Date.now() - this.lastDebugFrameReceivedTs > 2000) {
+      if (this.debugOfflineMsg) this.debugOfflineMsg.style.display = 'flex';
+      if (this.debugLiveDot) this.debugLiveDot.classList.add('offline');
+    }
+    if (broadcast) {
+      this.broadcastPatch({ debugOverlay: visible });
+      this.persist();
+    }
+  }
+
+  private updateDebugWindowFeedMode(mode: string): void {
+    if (this.debugFeedBadge) {
+      this.debugFeedBadge.textContent = mode.toUpperCase();
+    }
+    this.dbgState.debugViewMode = mode;
+    if (this.debugModeGuiCtrl) {
+      this.debugModeGuiCtrl.updateDisplay();
+    }
+  }
+
   setTestPattern(pattern: TestPatternMode): void {
     this.testPattern = pattern;
   }
@@ -1491,13 +1900,42 @@ export class CalibrationConsole {
       this.ctx.font = '9px monospace';
       this.ctx.fillText(store.frames.customSubtitles[i] || q.label, cX, cY + 6);
 
-      // Antenna Lock Meter
-      const lockPct = Math.round(
-        (sh.screenSignalLocks?.[i] ?? sh.signalLock ?? 0) * 100,
-      );
+      // Antenna Lock & Noise Meter + Reception Bar
+      const lockVal = sh.screenSignalLocks?.[i] ?? sh.signalLock ?? 0;
+      const noiseVal = sh.screenNoiseGains?.[i] ?? sh.noiseGain ?? 1;
+      const lockPct = Math.round(Math.max(0, Math.min(1, lockVal)) * 100);
+      const noisePct = Math.round(Math.max(0, Math.min(1, noiseVal)) * 100);
       const lockColor = lockPct > 70 ? '#3ddc97' : lockPct > 30 ? '#ffb703' : '#ff3366';
+
       this.ctx.fillStyle = lockColor;
-      this.ctx.fillText(`ANT: ${lockPct}%`, cX, cY + 20);
+      this.ctx.font = 'bold 9px monospace';
+      this.ctx.fillText(`ANT:${lockPct}% N:${noisePct}%`, cX, cY + 20);
+
+      // Mini antenna reception signal bar
+      const barW = 56;
+      const barH = 3;
+      const barX = cX - barW / 2;
+      const barY = cY + 25;
+
+      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      this.ctx.fillRect(barX, barY, barW, barH);
+      this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      this.ctx.lineWidth = 0.5;
+      this.ctx.strokeRect(barX, barY, barW, barH);
+
+      const fillW = (barW * lockPct) / 100;
+      if (fillW > 0) {
+        this.ctx.fillStyle = lockColor;
+        this.ctx.fillRect(barX, barY, fillW, barH);
+      }
+
+      // Bottom Query Message indicator
+      const queryOn = store.frames.showQueryMessage && (store.frames.screenQueryToggles?.[i] ?? true);
+      if (queryOn) {
+        this.ctx.fillStyle = '#3ddc97';
+        this.ctx.font = '8px monospace';
+        this.ctx.fillText('⚡ QUERY ON', cX, cY + 38);
+      }
 
       // Draw Draggable Corner Pin Handles
       const cPoints = [pBL, pBR, pTR, pTL];
@@ -1643,6 +2081,29 @@ export class CalibrationConsole {
     }
     if (saved.frames) {
       store.setFrames(saved.frames);
+      if (this.screenTitleBindings.length && saved.frames.customLabels) {
+        for (let i = 0; i < 6; i++) {
+          if (saved.frames.customLabels[i] !== undefined) {
+            this.screenTitleBindings[i].title = saved.frames.customLabels[i];
+          }
+        }
+      }
+      if (saved.frames.showQueryMessage !== undefined) {
+        this.queryState.showQueryMessage = saved.frames.showQueryMessage;
+      }
+      if (saved.frames.showLiveFeedBadge !== undefined) {
+        this.queryState.showLiveFeedBadge = saved.frames.showLiveFeedBadge;
+      }
+      if (saved.frames.customQueryText !== undefined) {
+        this.queryState.customQueryText = saved.frames.customQueryText;
+      }
+      if (saved.frames.screenQueryToggles) {
+        for (let i = 0; i < 6; i++) {
+          if (saved.frames.screenQueryToggles[i] !== undefined) {
+            this.queryState.screenQueryToggles[i] = saved.frames.screenQueryToggles[i];
+          }
+        }
+      }
     }
     if (saved.audio) {
       store.setAudioState(saved.audio);
@@ -1836,6 +2297,7 @@ export class CalibrationConsole {
     cancelAnimationFrame(this.rafId);
     this.unsubscribeStore?.();
     this.unsubscribeSync?.();
+    this.unsubscribeDebugFrame?.();
     this.gui?.destroy();
   }
 }

@@ -28,6 +28,9 @@ export class App {
   private audio = new AudioEngine();
   private calibration = new CalibrationManager();
   private debug: DebugView | null = null;
+  private debugCanvas: HTMLCanvasElement | null = null;
+  private sendingDebugFrame = false;
+  private lastDebugFrameTs = 0;
   private skeleton: SkeletonOverlay | null = null;
   private raf = 0;
   private lastTs = 0;
@@ -47,12 +50,11 @@ export class App {
     const skeletonCanvas = document.querySelector<HTMLCanvasElement>('#skeleton-stage');
     const feedVideo = document.querySelector<HTMLVideoElement>('#feed-video');
     const webcam = document.querySelector<HTMLVideoElement>('#webcam');
-    const debugCanvas = document.querySelector<HTMLCanvasElement>('#debug-overlay');
     this.hint = document.querySelector<HTMLElement>('#boot-hint');
     this.allowBtn = document.querySelector<HTMLButtonElement>('#allow-camera');
     this.diagEl = document.querySelector<HTMLElement>('#boot-diag');
 
-    if (!canvas || !skeletonCanvas || !feedVideo || !webcam || !debugCanvas) {
+    if (!canvas || !skeletonCanvas || !feedVideo || !webcam) {
       throw new Error('Missing required DOM nodes');
     }
 
@@ -77,7 +79,12 @@ export class App {
 
     this.camera = new CameraManager(webcam);
     this.tracker = new MediaPipeTracker();
-    this.debug = new DebugView(debugCanvas);
+
+    // Offscreen debug canvas used for streaming to calibration console
+    this.debugCanvas = document.createElement('canvas');
+    this.debugCanvas.width = 400;
+    this.debugCanvas.height = 300;
+    this.debug = new DebugView(this.debugCanvas);
     this.calibration.attach(this.videoQueue);
     this.calibration.init();
     this.videoQueue.attach(this.scene.videoPass, this.scene);
@@ -254,7 +261,29 @@ export class App {
 
       this.skeleton?.draw(frame);
       this.scene?.render();
-      this.debug?.draw(frame, webcam, feedVideo);
+
+      // Debug overlay rendering & cross-window streaming to calibration console
+      const curStore = useAppStore.getState();
+      if (curStore.debugOverlay && this.debug && this.debugCanvas) {
+        const now = performance.now();
+        if (!this.sendingDebugFrame && now - this.lastDebugFrameTs >= 33) {
+          this.lastDebugFrameTs = now;
+          this.sendingDebugFrame = true;
+          this.debug.draw(frame, webcam, feedVideo);
+          createImageBitmap(this.debugCanvas)
+            .then((bmp) => {
+              syncChannel.sendDebugFrame(bmp);
+              bmp.close();
+            })
+            .catch((err) => {
+              console.warn('[v-feed] sendDebugFrame error:', err);
+            })
+            .finally(() => {
+              this.sendingDebugFrame = false;
+            });
+        }
+      }
+
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -362,5 +391,11 @@ export class App {
     this.tracker?.dispose();
     this.camera?.stop();
     this.scene?.dispose();
+    if (this.debugCanvas) {
+      this.debugCanvas.width = 0;
+      this.debugCanvas.height = 0;
+      this.debugCanvas = null;
+    }
+    this.debug = null;
   }
 }

@@ -61,27 +61,6 @@ body.kiosk-cursor-hidden #boot-hint:not(.hidden) * {
   pointer-events: none;
 }
 
-#debug-overlay {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: 280px;
-  height: 210px;
-  border: 1px solid rgba(200, 196, 184, 0.4);
-  background: #000;
-  border-radius: 4px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 20;
-  image-rendering: pixelated;
-  transition: opacity 0.2s ease;
-}
-
-#debug-overlay.visible {
-  opacity: 1;
-}
-
 #boot-hint {
   position: absolute;
   inset: 0;

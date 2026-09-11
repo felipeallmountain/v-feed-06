@@ -135,6 +135,11 @@ export interface FrameState {
   thickness: number;
   opacity: number;
   showLabels: boolean;
+  showAntennaMetrics: boolean;
+  showQueryMessage: boolean;
+  screenQueryToggles: boolean[];
+  showLiveFeedBadge: boolean;
+  customQueryText: string;
   showCrosshairs: boolean;
   showCornerBrackets: boolean;
   rotation: number; // Global frame rotation in degrees (-180 to +180)
@@ -459,7 +464,12 @@ export const useAppStore = createStore<AppState>((set) => ({
     inset: 0.035,
     thickness: 2.0,
     opacity: 0.85,
-    showLabels: true,
+    showLabels: false,
+    showAntennaMetrics: true,
+    showQueryMessage: true,
+    screenQueryToggles: [true, true, true, true, true, true],
+    showLiveFeedBadge: true,
+    customQueryText: '',
     showCrosshairs: true,
     showCornerBrackets: true,
     rotation: 0,
