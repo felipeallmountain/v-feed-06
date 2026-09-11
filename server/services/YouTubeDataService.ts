@@ -24,6 +24,7 @@ export interface YouTubeVideoMeta {
   thumbnail: string;
   publishedAt: string;
   url: string;
+  query?: string;
 }
 
 interface CacheEntry<T> {

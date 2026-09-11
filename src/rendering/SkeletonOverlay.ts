@@ -659,11 +659,16 @@ export class SkeletonOverlay {
     const statusColor = isPaused ? '#f0a500' : '#3ddc97';
 
     const inter = store.interaction;
+    const curVideoQuery = store.currentVideoQuery;
     const rawQuery =
       frames.customQueryText?.trim() ||
+      curVideoQuery ||
       inter.lastQuery ||
       '#shorts retro public access tv host vintage 1950s black and white tv';
-    const reasonText = inter.lastTriggerReason ? ` [${inter.lastTriggerReason}]` : '';
+    const reasonText =
+      inter.lastTriggerReason && inter.lastQuery && rawQuery === inter.lastQuery
+        ? ` [${inter.lastTriggerReason}]`
+        : '';
     const fullQueryText = `⚡ QUERY: "${rawQuery}"${reasonText}`;
 
     this.ctx.save();

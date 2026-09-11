@@ -208,6 +208,7 @@ export interface AppState {
   audioUnlocked: boolean;
   videoMode: VideoMode;
   currentVideoUrl: string | null;
+  currentVideoQuery: string | null;
   tracking: TrackingState;
   interaction: InteractionState;
   quota: QuotaState;
@@ -245,6 +246,7 @@ export interface AppState {
   setAudioUnlocked: (unlocked: boolean) => void;
   setVideoMode: (mode: VideoMode) => void;
   setCurrentVideoUrl: (url: string | null) => void;
+  setCurrentVideoQuery: (query: string | null) => void;
   patchTracking: (partial: Partial<TrackingState>) => void;
   patchInteraction: (partial: Partial<InteractionState>) => void;
   setInteractionEnabled: (enabled: boolean) => void;
@@ -500,6 +502,7 @@ export const useAppStore = createStore<AppState>((set) => ({
   audioUnlocked: false,
   videoMode: 'live',
   currentVideoUrl: null,
+  currentVideoQuery: null,
   tracking: {
     present: false,
     distance: 3,
@@ -555,6 +558,10 @@ export const useAppStore = createStore<AppState>((set) => ({
                 rotation: t?.rotation ?? s.frames.screenTransforms?.[i]?.rotation ?? 0,
               }))
             : s.frames.screenTransforms,
+        screenQueryToggles:
+          partial.screenQueryToggles !== undefined
+            ? [...partial.screenQueryToggles]
+            : s.frames.screenQueryToggles,
       },
       showScreenFrames: partial.show !== undefined ? partial.show : s.showScreenFrames,
       screenFrameOpacity: partial.opacity !== undefined ? partial.opacity : s.screenFrameOpacity,
@@ -623,6 +630,7 @@ export const useAppStore = createStore<AppState>((set) => ({
   setAudioUnlocked: (audioUnlocked) => set({ audioUnlocked }),
   setVideoMode: (videoMode) => set({ videoMode }),
   setCurrentVideoUrl: (currentVideoUrl) => set({ currentVideoUrl }),
+  setCurrentVideoQuery: (currentVideoQuery) => set({ currentVideoQuery }),
   patchTracking: (partial) =>
     set((s) => ({ tracking: { ...s.tracking, ...partial } })),
   patchInteraction: (partial) =>

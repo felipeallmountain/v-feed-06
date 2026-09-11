@@ -36,6 +36,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', resizeCanvas);
 
   const consoleApp = new CalibrationConsole(canvas, guiContainer);
+  (window as any).__VFEED_CALIBRATION__ = consoleApp;
 
   // Connection indicator status poller
   const statusBadge = document.querySelector<HTMLElement>('#conn-status');

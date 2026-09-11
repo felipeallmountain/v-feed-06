@@ -268,5 +268,6 @@ function formatPlayableItem(video: IngestedVideo) {
     source: video.source,
     url: `/fallback-videos/${encodeURIComponent(video.filename)}`,
     streamUrl: `/api/videos/${encodeURIComponent(video.id)}/stream`,
+    query: video.query,
   };
 }

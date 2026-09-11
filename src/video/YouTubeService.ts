@@ -11,6 +11,7 @@ export interface PlaylistItem {
   source: 'youtube' | 'local';
   url: string;
   streamUrl?: string;
+  query?: string;
 }
 
 export interface ReplenishmentStatusResponse {

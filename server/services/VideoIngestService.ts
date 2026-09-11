@@ -16,6 +16,7 @@ export interface IngestedVideo {
   fileSize: number;
   downloadedAt: string;
   source: 'youtube' | 'local';
+  query?: string;
 }
 
 export interface IngestManifest {
@@ -693,6 +694,9 @@ export class VideoIngestService {
       } else {
         console.log(`[v-feed] Searching YouTube shorts for query: "${searchTopic}"`);
         candidates = await this.youtube.searchShorts(searchTopic, maxVideos);
+        candidates.forEach((c) => {
+          c.query = searchTopic;
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -958,6 +962,7 @@ export class VideoIngestService {
       fileSize: stat.size,
       downloadedAt: new Date().toISOString(),
       source: 'youtube',
+      query: meta.query,
     };
 
     const manifest = this.loadManifest();

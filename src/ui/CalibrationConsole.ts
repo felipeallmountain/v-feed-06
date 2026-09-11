@@ -141,6 +141,16 @@ export class CalibrationConsole {
   private antennaMetricsDebugCtrl?: ReturnType<GUI['add']>;
   private antennaMetricsFrameCtrl?: ReturnType<GUI['add']>;
   private screenTitleBindings: Array<{ title: string }> = [];
+  private videoQueryController: { query: string } | null = null;
+  private queryFolderVideoQuery: { query: string } | null = null;
+  private screenQueryTogglesState = {
+    crt1: true,
+    crt2: true,
+    crt3: true,
+    crt4: true,
+    crt5: true,
+    crt6: true,
+  };
   private queryState = {
     showQueryMessage: true,
     showLiveFeedBadge: true,
@@ -223,6 +233,16 @@ export class CalibrationConsole {
       if (this.nowPlayingController) {
         this.nowPlayingController.title = t.video.title || 'Live Feed';
       }
+      if (t.video.query) {
+        useAppStore.getState().setCurrentVideoQuery(t.video.query);
+        if (this.videoQueryController) {
+          this.videoQueryController.query = t.video.query;
+        }
+        if (this.queryFolderVideoQuery) {
+          this.queryFolderVideoQuery.query = t.video.query;
+        }
+        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
       if (this.timeController) {
         const cur = this.formatTime(t.video.currentTime);
         const dur = this.formatTime(t.video.duration);
@@ -261,6 +281,33 @@ export class CalibrationConsole {
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
+  private syncScreenQueryToggles(): void {
+    const store = useAppStore.getState();
+    const next = [
+      this.screenQueryTogglesState.crt1,
+      this.screenQueryTogglesState.crt2,
+      this.screenQueryTogglesState.crt3,
+      this.screenQueryTogglesState.crt4,
+      this.screenQueryTogglesState.crt5,
+      this.screenQueryTogglesState.crt6,
+    ];
+    this.queryState.screenQueryToggles = [...next];
+    store.setFrames({ screenQueryToggles: next });
+    this.broadcastPatch({ frames: { screenQueryToggles: next } });
+    this.persist();
+    this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+  }
+
+  private setAllScreenQueries(enabled: boolean): void {
+    this.screenQueryTogglesState.crt1 = enabled;
+    this.screenQueryTogglesState.crt2 = enabled;
+    this.screenQueryTogglesState.crt3 = enabled;
+    this.screenQueryTogglesState.crt4 = enabled;
+    this.screenQueryTogglesState.crt5 = enabled;
+    this.screenQueryTogglesState.crt6 = enabled;
+    this.syncScreenQueryToggles();
+  }
+
   private applyIncomingStatePatch(patch: any): void {
     const store = useAppStore.getState();
     if (patch.shaders) store.patchShaders(patch.shaders);
@@ -285,7 +332,9 @@ export class CalibrationConsole {
       if (patch.frames.screenQueryToggles) {
         for (let i = 0; i < 6; i++) {
           if (patch.frames.screenQueryToggles[i] !== undefined) {
-            this.queryState.screenQueryToggles[i] = patch.frames.screenQueryToggles[i];
+            const val = patch.frames.screenQueryToggles[i];
+            this.queryState.screenQueryToggles[i] = val;
+            (this.screenQueryTogglesState as any)[`crt${i + 1}`] = val;
           }
         }
       }
@@ -513,6 +562,7 @@ export class CalibrationConsole {
 
     // Screen Titles for Antenna Metrics (CRT 01 - 06)
     const titlesFolder = framesFolder.addFolder('Screen Titles (CRT 01 - 06)');
+    titlesFolder.close();
     this.screenTitleBindings = Array.from({ length: 6 }, (_, i) => ({
       title: store.frames.customLabels[i] || `CRT [0${i + 1}]`,
     }));
@@ -524,7 +574,11 @@ export class CalibrationConsole {
         .name(`Screen ${i + 1} (${screenPosNames[i]})`)
         .onChange((v: string) => {
           store.setScreenCustomLabel(i, v);
-          this.broadcastPatch({ frames: useAppStore.getState().frames });
+          this.broadcastPatch({
+            frames: {
+              customLabels: useAppStore.getState().frames.customLabels,
+            },
+          });
           this.persist();
           this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
         });
@@ -557,11 +611,15 @@ export class CalibrationConsole {
         ? [...store.frames.screenQueryToggles]
         : [true, true, true, true, true, true],
     };
+    for (let i = 0; i < 6; i++) {
+      (this.screenQueryTogglesState as any)[`crt${i + 1}`] = this.queryState.screenQueryToggles[i] ?? true;
+    }
 
     const queryFolder = framesFolder.addFolder('Bottom Query Message (CRT 01 - 06)');
+    queryFolder.open();
     queryFolder
       .add(this.queryState, 'showQueryMessage')
-      .name('Enable Query Messages')
+      .name('Enable All Query Messages')
       .onChange((v: boolean) => {
         store.setFrames({ showQueryMessage: v });
         this.broadcastPatch({ frames: { showQueryMessage: v } });
@@ -579,6 +637,14 @@ export class CalibrationConsole {
         this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
       });
 
+    this.queryFolderVideoQuery = {
+      query: this.latestTelemetry?.video?.query || store.currentVideoQuery || 'Detecting...',
+    };
+    queryFolder
+      .add(this.queryFolderVideoQuery, 'query')
+      .name('Actual Video Query')
+      .disable();
+
     queryFolder
       .add(this.queryState, 'customQueryText')
       .name('Custom Query Override')
@@ -588,48 +654,45 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    const screenTogglesFolder = queryFolder.addFolder('Per-Screen Visibility Toggles');
-    for (let i = 0; i < 6; i++) {
-      screenTogglesFolder
-        .add(this.queryState.screenQueryToggles, i as any)
-        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
-        .onChange((v: boolean) => {
-          const next = [...this.queryState.screenQueryToggles];
-          next[i] = v;
-          store.setFrames({ screenQueryToggles: next });
-          this.broadcastPatch({ frames: { screenQueryToggles: next } });
-          this.persist();
-          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-        });
-    }
+    // 6 Direct Per-Screen Visibility Toggles
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt1')
+      .name(`CRT [01] (${screenPosNames[0]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt2')
+      .name(`CRT [02] (${screenPosNames[1]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt3')
+      .name(`CRT [03] (${screenPosNames[2]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt4')
+      .name(`CRT [04] (${screenPosNames[3]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt5')
+      .name(`CRT [05] (${screenPosNames[4]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    queryFolder
+      .add(this.screenQueryTogglesState, 'crt6')
+      .name(`CRT [06] (${screenPosNames[5]})`)
+      .onChange(() => this.syncScreenQueryToggles());
 
-    screenTogglesFolder
+    queryFolder
       .add(
         {
-          enableAll: () => {
-            const next = [true, true, true, true, true, true];
-            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = true;
-            store.setFrames({ screenQueryToggles: next });
-            this.broadcastPatch({ frames: { screenQueryToggles: next } });
-            this.persist();
-            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-          },
+          enableAll: () => this.setAllScreenQueries(true),
         },
         'enableAll',
       )
       .name('Enable All Screens');
 
-    screenTogglesFolder
+    queryFolder
       .add(
         {
-          disableAll: () => {
-            const next = [false, false, false, false, false, false];
-            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = false;
-            store.setFrames({ screenQueryToggles: next });
-            this.broadcastPatch({ frames: { screenQueryToggles: next } });
-            this.persist();
-            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-          },
+          disableAll: () => this.setAllScreenQueries(false),
         },
         'disableAll',
       )
@@ -1204,6 +1267,9 @@ export class CalibrationConsole {
     this.nowPlayingController = { title: 'Connecting to main app...' };
     video.add(this.nowPlayingController, 'title').name('Now Playing').disable();
 
+    this.videoQueryController = { query: 'Connecting to main app...' };
+    video.add(this.videoQueryController, 'query').name('Current Video Query').disable();
+
     this.timeController = { time: '0:00 / 0:00' };
     video.add(this.timeController, 'time').name('Time / Duration').disable();
 
@@ -1439,48 +1505,45 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    const debugScreenToggles = debugQueryFolder.addFolder('Per-Screen Visibility Toggles');
-    for (let i = 0; i < 6; i++) {
-      debugScreenToggles
-        .add(this.queryState.screenQueryToggles, i as any)
-        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
-        .onChange((v: boolean) => {
-          const next = [...this.queryState.screenQueryToggles];
-          next[i] = v;
-          store.setFrames({ screenQueryToggles: next });
-          this.broadcastPatch({ frames: { screenQueryToggles: next } });
-          this.persist();
-          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-        });
-    }
+    // 6 Direct Per-Screen Visibility Toggles
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt1')
+      .name(`CRT [01] (${screenPosNames[0]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt2')
+      .name(`CRT [02] (${screenPosNames[1]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt3')
+      .name(`CRT [03] (${screenPosNames[2]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt4')
+      .name(`CRT [04] (${screenPosNames[3]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt5')
+      .name(`CRT [05] (${screenPosNames[4]})`)
+      .onChange(() => this.syncScreenQueryToggles());
+    debugQueryFolder
+      .add(this.screenQueryTogglesState, 'crt6')
+      .name(`CRT [06] (${screenPosNames[5]})`)
+      .onChange(() => this.syncScreenQueryToggles());
 
-    debugScreenToggles
+    debugQueryFolder
       .add(
         {
-          enableAll: () => {
-            const next = [true, true, true, true, true, true];
-            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = true;
-            store.setFrames({ screenQueryToggles: next });
-            this.broadcastPatch({ frames: { screenQueryToggles: next } });
-            this.persist();
-            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-          },
+          enableAll: () => this.setAllScreenQueries(true),
         },
         'enableAll',
       )
       .name('Enable All Screens');
 
-    debugScreenToggles
+    debugQueryFolder
       .add(
         {
-          disableAll: () => {
-            const next = [false, false, false, false, false, false];
-            for (let i = 0; i < 6; i++) this.queryState.screenQueryToggles[i] = false;
-            store.setFrames({ screenQueryToggles: next });
-            this.broadcastPatch({ frames: { screenQueryToggles: next } });
-            this.persist();
-            this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-          },
+          disableAll: () => this.setAllScreenQueries(false),
         },
         'disableAll',
       )
@@ -1934,7 +1997,13 @@ export class CalibrationConsole {
       if (queryOn) {
         this.ctx.fillStyle = '#3ddc97';
         this.ctx.font = '8px monospace';
-        this.ctx.fillText('⚡ QUERY ON', cX, cY + 38);
+        const qText =
+          store.frames.customQueryText?.trim() ||
+          this.latestTelemetry?.video?.query ||
+          store.currentVideoQuery ||
+          'QUERY ON';
+        const shortQ = qText.length > 20 ? qText.slice(0, 18) + '…' : qText;
+        this.ctx.fillText(`⚡ ${shortQ}`, cX, cY + 38);
       }
 
       // Draw Draggable Corner Pin Handles
@@ -2100,7 +2169,9 @@ export class CalibrationConsole {
       if (saved.frames.screenQueryToggles) {
         for (let i = 0; i < 6; i++) {
           if (saved.frames.screenQueryToggles[i] !== undefined) {
-            this.queryState.screenQueryToggles[i] = saved.frames.screenQueryToggles[i];
+            const val = saved.frames.screenQueryToggles[i];
+            this.queryState.screenQueryToggles[i] = val;
+            (this.screenQueryTogglesState as any)[`crt${i + 1}`] = val;
           }
         }
       }

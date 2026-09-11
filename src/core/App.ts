@@ -99,6 +99,7 @@ export class App {
     this.unsubscribeSync = syncChannel.onMessage((msg) => {
       if (msg.type === 'REQUEST_INITIAL_STATE') {
         syncChannel.sendInitialState(this.calibration.getCalibrationPayload());
+        this.sendTelemetryTick(feedVideo);
       } else if (msg.type === 'REMOTE_COMMAND') {
         const { action, value } = msg.payload;
         if (action === 'play') {
@@ -221,42 +222,7 @@ export class App {
       // Stream live telemetry tick to operator console every 50ms (20Hz)
       if (ts - this.lastTelemetryTs > 50) {
         this.lastTelemetryTs = ts;
-        const curState = useAppStore.getState();
-        const curInter = curState.interaction;
-        const curSh = curState.shaders;
-        syncChannel.sendTelemetry({
-          fps: curState.fps,
-          tracking: {
-            present: curState.tracking.present,
-            distance: curState.tracking.distance,
-            personCount: curState.tracking.personCount,
-            screenPresences: curState.tracking.screenPresences,
-            antennaLocks: curSh.screenSignalLocks || Array(6).fill(curSh.signalLock),
-            antennaNoises: curSh.screenNoiseGains || Array(6).fill(curSh.noiseGain),
-          },
-          interaction: {
-            activePose: curInter.activePose,
-            densityState: curInter.densityState,
-            kineticState: curInter.kineticState,
-            chromaState: curInter.chromaState,
-            kineticEnergy: curInter.kineticEnergy,
-            holdProgress: curInter.holdProgress,
-            isHolding: curInter.isHolding,
-            cooldownRemainingSec: curInter.cooldownRemainingSec,
-            lastQuery: curInter.lastQuery,
-            lastTriggerReason: curInter.lastTriggerReason,
-          },
-          quota: curState.quota,
-          video: {
-            title: this.videoQueue.currentTitle,
-            channelTitle: this.videoQueue.currentItem?.channelTitle,
-            currentTime: feedVideo.currentTime || 0,
-            duration: feedVideo.duration || 0,
-            paused: feedVideo.paused,
-            videoMode: curState.videoMode,
-            url: this.videoQueue.currentItem?.url,
-          },
-        });
+        this.sendTelemetryTick(feedVideo);
       }
 
       this.skeleton?.draw(frame);
@@ -374,6 +340,46 @@ export class App {
 
     await this.videoQueue.playCurrent();
     this.unlocking = false;
+  }
+
+  private sendTelemetryTick(feedVideo: HTMLVideoElement): void {
+    const curState = useAppStore.getState();
+    const curInter = curState.interaction;
+    const curSh = curState.shaders;
+    syncChannel.sendTelemetry({
+      fps: curState.fps,
+      tracking: {
+        present: curState.tracking.present,
+        distance: curState.tracking.distance,
+        personCount: curState.tracking.personCount,
+        screenPresences: curState.tracking.screenPresences,
+        antennaLocks: curSh.screenSignalLocks || Array(6).fill(curSh.signalLock),
+        antennaNoises: curSh.screenNoiseGains || Array(6).fill(curSh.noiseGain),
+      },
+      interaction: {
+        activePose: curInter.activePose,
+        densityState: curInter.densityState,
+        kineticState: curInter.kineticState,
+        chromaState: curInter.chromaState,
+        kineticEnergy: curInter.kineticEnergy,
+        holdProgress: curInter.holdProgress,
+        isHolding: curInter.isHolding,
+        cooldownRemainingSec: curInter.cooldownRemainingSec,
+        lastQuery: curInter.lastQuery,
+        lastTriggerReason: curInter.lastTriggerReason,
+      },
+      quota: curState.quota,
+      video: {
+        title: this.videoQueue.currentTitle,
+        channelTitle: this.videoQueue.currentItem?.channelTitle,
+        currentTime: feedVideo.currentTime || 0,
+        duration: feedVideo.duration || 0,
+        paused: feedVideo.paused,
+        videoMode: curState.videoMode,
+        url: this.videoQueue.currentItem?.url,
+        query: this.videoQueue.currentQuery,
+      },
+    });
   }
 
   dispose(): void {

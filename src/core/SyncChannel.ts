@@ -43,6 +43,7 @@ export interface VideoTelemetry {
   paused: boolean;
   videoMode: VideoMode;
   url?: string;
+  query?: string | null;
 }
 
 export interface TelemetryTickPayload {
