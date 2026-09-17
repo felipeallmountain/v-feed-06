@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { QuotaGuard, type QuotaStatus } from './QuotaGuard.js';
+import { perfTracker } from './PerformanceTracker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(__dirname, '..', '..');
@@ -168,6 +169,13 @@ export class YouTubeDataService {
     const cached = this.getCached<YouTubeVideoMeta[]>(cacheKey);
     if (cached) {
       console.log(`[v-feed cache] ✓ Served query "${query}" from cache (0 quota units)`);
+      perfTracker.recordApiCall({
+        type: 'cacheHit',
+        queryOrTarget: query,
+        units: 0,
+        durationMs: 0,
+        success: true,
+      });
       return cached;
     }
 
@@ -183,14 +191,47 @@ export class YouTubeDataService {
     url.searchParams.set('maxResults', String(Math.min(50, Math.max(1, maxResults))));
     url.searchParams.set('key', apiKey);
 
-    const response = await fetch(url);
+    const t0 = performance.now();
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch (netErr) {
+      const durationMs = Math.round(performance.now() - t0);
+      const msg = netErr instanceof Error ? netErr.message : String(netErr);
+      perfTracker.recordApiCall({
+        type: 'search',
+        queryOrTarget: query,
+        units: 0,
+        durationMs,
+        success: false,
+        error: msg,
+      });
+      throw netErr;
+    }
+
+    const durationMs = Math.round(performance.now() - t0);
     if (!response.ok) {
       const errorBody = await response.text();
+      perfTracker.recordApiCall({
+        type: 'search',
+        queryOrTarget: query,
+        units: 0,
+        durationMs,
+        success: false,
+        error: `HTTP ${response.status}: ${errorBody.slice(0, 80)}`,
+      });
       throw new Error(`YouTube search API error ${response.status}: ${errorBody}`);
     }
 
     // Track search call cost
     this.quotaGuard.recordCost('search', 100);
+    perfTracker.recordApiCall({
+      type: 'search',
+      queryOrTarget: query,
+      units: 100,
+      durationMs,
+      success: true,
+    });
 
     const data = (await response.json()) as {
       items?: Array<{
@@ -265,6 +306,13 @@ export class YouTubeDataService {
     const cached = this.getCached<YouTubeVideoMeta[]>(cacheKey);
     if (cached) {
       console.log(`[v-feed cache] ✓ Served playlist "${playlistId}" from cache (0 quota units)`);
+      perfTracker.recordApiCall({
+        type: 'cacheHit',
+        queryOrTarget: playlistId,
+        units: 0,
+        durationMs: 0,
+        success: true,
+      });
       return cached;
     }
 
@@ -278,14 +326,47 @@ export class YouTubeDataService {
     url.searchParams.set('playlistId', playlistId);
     url.searchParams.set('key', apiKey);
 
-    const response = await fetch(url);
+    const t0 = performance.now();
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch (netErr) {
+      const durationMs = Math.round(performance.now() - t0);
+      const msg = netErr instanceof Error ? netErr.message : String(netErr);
+      perfTracker.recordApiCall({
+        type: 'playlist',
+        queryOrTarget: playlistId,
+        units: 0,
+        durationMs,
+        success: false,
+        error: msg,
+      });
+      throw netErr;
+    }
+
+    const durationMs = Math.round(performance.now() - t0);
     if (!response.ok) {
       const errorBody = await response.text();
+      perfTracker.recordApiCall({
+        type: 'playlist',
+        queryOrTarget: playlistId,
+        units: 0,
+        durationMs,
+        success: false,
+        error: `HTTP ${response.status}: ${errorBody.slice(0, 80)}`,
+      });
       throw new Error(`YouTube playlist API error ${response.status}: ${errorBody}`);
     }
 
     // Track playlist items list cost
     this.quotaGuard.recordCost('playlist', 1);
+    perfTracker.recordApiCall({
+      type: 'playlist',
+      queryOrTarget: playlistId,
+      units: 1,
+      durationMs,
+      success: true,
+    });
 
     const data = (await response.json()) as {
       items?: Array<{
@@ -378,12 +459,31 @@ export class YouTubeDataService {
       url.searchParams.set('id', chunk.join(','));
       url.searchParams.set('key', apiKey);
 
+      const t0 = performance.now();
       try {
         const res = await fetch(url);
-        if (!res.ok) continue;
+        const durationMs = Math.round(performance.now() - t0);
+        if (!res.ok) {
+          perfTracker.recordApiCall({
+            type: 'videoDetails',
+            queryOrTarget: `${chunk.length} video IDs`,
+            units: 0,
+            durationMs,
+            success: false,
+            error: `HTTP ${res.status}`,
+          });
+          continue;
+        }
 
         // Record 1 unit per chunk
         this.quotaGuard.recordCost('videoDetails', 1);
+        perfTracker.recordApiCall({
+          type: 'videoDetails',
+          queryOrTarget: `${chunk.length} video IDs`,
+          units: 1,
+          durationMs,
+          success: true,
+        });
 
         const data = (await res.json()) as {
           items?: Array<{

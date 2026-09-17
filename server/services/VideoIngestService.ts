@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { YouTubeDataService, type YouTubeVideoMeta } from './YouTubeDataService.js';
+import { perfTracker } from './PerformanceTracker.js';
 
 export interface IngestedVideo {
   id: string;
@@ -349,6 +350,17 @@ export class VideoIngestService {
         this.saveManifest(manifest);
         console.log(
           `[v-feed storage] Pruned ${prunedVideos.length} video(s), reclaimed ${formatBytes(reclaimedBytes)}`,
+        );
+
+        perfTracker.recordPrune(
+          {
+            prunedCount: prunedVideos.length,
+            reclaimedBytes,
+            reclaimedFormatted: formatBytes(reclaimedBytes),
+            reason: options?.force ? 'Manual prune' : 'Storage limit reached',
+          },
+          Math.max(0, currentUsage.totalBytes - reclaimedBytes),
+          manifest.videos.length,
         );
       }
     }
@@ -878,6 +890,9 @@ export class VideoIngestService {
 
     console.log(`[v-feed] Ingesting YouTube video: ${meta.title} (${meta.id})`);
 
+    const downloadStartTime = Date.now();
+    let downloadSpeed = '--';
+
     await new Promise<void>((resolve, reject) => {
       // yt-dlp options: format selection prioritizing MP4 up to 1080x1920 vertical format
       const args = [
@@ -907,6 +922,7 @@ export class VideoIngestService {
           this.activeDownload.progressPercent = parseFloat(progressMatch[1]);
           this.activeDownload.speed = progressMatch[3];
           this.activeDownload.eta = progressMatch[4];
+          downloadSpeed = progressMatch[3];
         }
       });
 
@@ -969,6 +985,27 @@ export class VideoIngestService {
     manifest.videos = manifest.videos.filter((v) => v.id !== meta.id && v.filename !== filename);
     manifest.videos.unshift(ingested);
     this.saveManifest(manifest);
+
+    const downloadDurationSec = Math.max(1, Math.round((Date.now() - downloadStartTime) / 1000));
+    const curStorage = this.getStorageUsage();
+    perfTracker.recordVideoDownload(
+      {
+        id: ingested.id,
+        title: ingested.title,
+        channelTitle: ingested.channelTitle,
+        filename: ingested.filename,
+        fileSize: ingested.fileSize,
+        fileSizeFormatted: formatBytes(ingested.fileSize),
+        durationSec: ingested.durationSec,
+        durationFormatted: ingested.durationFormatted,
+        downloadDurationSec,
+        downloadSpeed,
+        downloadedAt: ingested.downloadedAt,
+        query: ingested.query,
+      },
+      curStorage.totalBytes,
+      curStorage.videoCount,
+    );
 
     this.activeDownload = null;
     return ingested;

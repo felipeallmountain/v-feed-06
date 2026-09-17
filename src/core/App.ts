@@ -44,6 +44,9 @@ export class App {
   private diagEl: HTMLElement | null = null;
   private gridTex: THREE.Texture | null = null;
   private resizeHandler: (() => void) | null = null;
+  private perfBadgeEl: HTMLElement | null = null;
+  private perfPollTimer: number | null = null;
+  private perfKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   async start(): Promise<void> {
     const canvas = document.querySelector<HTMLCanvasElement>('#stage');
@@ -164,6 +167,8 @@ export class App {
         window.open('/calibration.html', 'vfeed_calib_window', 'width=1200,height=880');
       }
     });
+
+    this.bindPerfControls();
 
     await this.refreshDiagnostics();
     this.bindUnlock();
@@ -382,11 +387,132 @@ export class App {
     });
   }
 
+  private bindPerfControls(): void {
+    // 1. Keyboard shortcut 'Q' to stop active performance test
+    this.perfKeyHandler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        void this.handlePerfStopAction();
+      }
+    };
+    window.addEventListener('keydown', this.perfKeyHandler);
+
+    // 2. Floating on-screen Stop Test button / status indicator
+    this.perfBadgeEl = document.createElement('button');
+    this.perfBadgeEl.id = 'perf-stop-badge';
+    this.perfBadgeEl.style.cssText = [
+      'position: fixed',
+      'bottom: 18px',
+      'right: 18px',
+      'z-index: 99999',
+      'background: #ff0055',
+      'color: #ffffff',
+      'font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      'font-size: 11px',
+      'font-weight: bold',
+      'letter-spacing: 0.05em',
+      'padding: 8px 14px',
+      'border-radius: 4px',
+      'border: 1px solid rgba(255, 255, 255, 0.4)',
+      'box-shadow: 0 4px 12px rgba(255, 0, 85, 0.4)',
+      'cursor: pointer',
+      'display: none',
+      'transition: transform 0.15s ease',
+    ].join('; ');
+    this.perfBadgeEl.textContent = '⏹ STOP PERF TEST [Q]';
+    this.perfBadgeEl.onclick = () => void this.handlePerfStopAction();
+    document.body.appendChild(this.perfBadgeEl);
+
+    // Check status every 4 seconds to show/hide badge
+    const checkStatus = async () => {
+      try {
+        const res = await fetch('/api/perf/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (this.perfBadgeEl) {
+            this.perfBadgeEl.style.display = data?.status?.isRunning ? 'block' : 'none';
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    void checkStatus();
+    this.perfPollTimer = window.setInterval(checkStatus, 4000);
+  }
+
+  private async handlePerfStopAction(): Promise<void> {
+    try {
+      const statusRes = await fetch('/api/perf/status');
+      if (!statusRes.ok) return;
+      const statusData = await statusRes.json();
+
+      if (!statusData?.status?.isRunning) {
+        this.showToast('ℹ️ Performance test is idle. Run "npm run test:perf" to start a test.', 3000);
+        return;
+      }
+
+      const stopRes = await fetch('/api/perf/stop', { method: 'POST' });
+      if (stopRes.ok) {
+        const stopData = await stopRes.json();
+        if (this.perfBadgeEl) this.perfBadgeEl.style.display = 'none';
+        const filename = stopData.reportPath ? stopData.reportPath.split('/').pop() : 'perf-report-latest.md';
+        this.showToast(`🛑 Performance Test Stopped! Report saved: ${filename}`, 8000);
+        console.log(`[v-feed perf] Test stopped via 'q' key. Report saved to: ${stopData.reportPath}`);
+      }
+    } catch (err) {
+      console.warn('[v-feed perf] Failed to stop test session:', err);
+    }
+  }
+
+  private showToast(message: string, durationMs = 4000): void {
+    const existing = document.querySelector('#vfeed-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'vfeed-toast';
+    toast.style.cssText = [
+      'position: fixed',
+      'top: 24px',
+      'left: 50%',
+      'transform: translateX(-50%)',
+      'z-index: 100000',
+      'background: #12141a',
+      'color: #3ddc97',
+      'font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      'font-size: 13px',
+      'padding: 10px 20px',
+      'border-radius: 6px',
+      'border: 1px solid #3ddc97',
+      'box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6)',
+      'pointer-events: none',
+      'transition: opacity 0.3s ease',
+    ].join('; ');
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      setTimeout(() => toast.remove(), 300);
+    }, durationMs);
+  }
+
   dispose(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
     if (this.resizeHandler) {
       window.removeEventListener('resize', this.resizeHandler);
+    }
+    if (this.perfKeyHandler) {
+      window.removeEventListener('keydown', this.perfKeyHandler);
+    }
+    if (this.perfPollTimer) {
+      clearInterval(this.perfPollTimer);
+    }
+    if (this.perfBadgeEl) {
+      this.perfBadgeEl.remove();
+      this.perfBadgeEl = null;
     }
     this.unsubscribeSync?.();
     this.gridTex?.dispose();

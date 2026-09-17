@@ -295,6 +295,44 @@ const ADMIN_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="grid">
+    <!-- Performance & Longevity Testing Card -->
+    <div class="card" style="grid-column: 1 / -1; border-color: rgba(61, 220, 151, 0.4);">
+      <h2>
+        <span>Performance & Longevity Test Suite</span>
+        <span id="perf-badge" class="badge">Idle</span>
+      </h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1rem; font-size: 0.85rem;">
+        <div style="background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--surface-border);">
+          <div style="color: var(--text-muted); font-size: 0.75rem;">ELAPSED TIME</div>
+          <div id="perf-elapsed" style="font-size: 1.1rem; font-weight: bold; color: var(--cyan);">00:00:00</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--surface-border);">
+          <div style="color: var(--text-muted); font-size: 0.75rem;">YOUTUBE API REQUESTS</div>
+          <div id="perf-requests" style="font-size: 1.1rem; font-weight: bold; color: var(--primary);">0 calls</div>
+          <div id="perf-quota" style="font-size: 0.75rem; color: var(--text-muted);">0 units (0/hr)</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--surface-border);">
+          <div style="color: var(--text-muted); font-size: 0.75rem;">VIDEOS SAVED (TEST)</div>
+          <div id="perf-videos" style="font-size: 1.1rem; font-weight: bold; color: var(--primary);">0 videos</div>
+          <div id="perf-storage" style="font-size: 0.75rem; color: var(--text-muted);">+0 B added</div>
+        </div>
+        <div style="background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--surface-border);">
+          <div style="color: var(--text-muted); font-size: 0.75rem;">ESTIMATED RUNWAY</div>
+          <div id="perf-runway" style="font-size: 1.1rem; font-weight: bold; color: var(--cyan);">~999 hrs</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">Until daily quota cap</div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button id="btn-perf-start" class="active">▶ Start Performance Test</button>
+        <button id="btn-perf-stop" class="danger">⏹ Stop Test & Generate Report [Q]</button>
+        <button id="btn-perf-clear-videos">🧹 Clear Local Video Cache</button>
+        <button id="btn-perf-view-report">📄 View Latest Report</button>
+      </div>
+      <div class="status-box" id="perf-log">Ready. Use "npm run test:perf" in terminal or controls above.</div>
+    </div>
+  </div>
+
+  <div class="grid">
     <!-- Automated Sync -->
     <div class="card">
       <h2>Automated Sync (Search or Playlist)</h2>
@@ -782,12 +820,136 @@ const ADMIN_HTML = `<!DOCTYPE html>
       }
     }
 
+    // Performance Test Controls
+    const perfBadge = document.getElementById('perf-badge');
+    const perfElapsed = document.getElementById('perf-elapsed');
+    const perfRequests = document.getElementById('perf-requests');
+    const perfQuota = document.getElementById('perf-quota');
+    const perfVideos = document.getElementById('perf-videos');
+    const perfStorage = document.getElementById('perf-storage');
+    const perfRunway = document.getElementById('perf-runway');
+    const perfLog = document.getElementById('perf-log');
+    const btnPerfStart = document.getElementById('btn-perf-start');
+    const btnPerfStop = document.getElementById('btn-perf-stop');
+    const btnPerfClearVideos = document.getElementById('btn-perf-clear-videos');
+    const btnPerfViewReport = document.getElementById('btn-perf-view-report');
+
+    btnPerfStart.addEventListener('click', async () => {
+      try {
+        perfLog.textContent = 'Starting performance test session...';
+        const res = await fetch('/api/perf/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: 'Admin UI Performance Test Session' }),
+        });
+        const d = await res.json();
+        if (d.ok) {
+          perfLog.textContent = '✓ Performance test session active: ' + (d.session?.sessionId || 'started');
+          pollPerfStatus();
+        } else {
+          perfLog.textContent = '✗ Failed to start test: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        perfLog.textContent = '✗ Request error: ' + err.message;
+      }
+    });
+
+    btnPerfStop.addEventListener('click', async () => {
+      try {
+        perfLog.textContent = 'Stopping performance test and compiling findings...';
+        const res = await fetch('/api/perf/stop', { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+          perfLog.textContent = '✓ Test stopped. Report saved to: ' + (d.reportPath || 'reports/perf-report-latest.md');
+          pollPerfStatus();
+          alert('Performance test stopped!\n\nFindings report saved:\n' + d.reportPath);
+        } else {
+          perfLog.textContent = '✗ Failed to stop test: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        perfLog.textContent = '✗ Stop error: ' + err.message;
+      }
+    });
+
+    btnPerfClearVideos.addEventListener('click', async () => {
+      if (!confirm('Clear all local cached videos, manifest, and API cache? (Display calibration is preserved)')) return;
+      try {
+        perfLog.textContent = 'Purging cached videos and API cache...';
+        const res = await fetch('/api/perf/clear-videos', { method: 'POST' });
+        const d = await res.json();
+        if (d.ok) {
+          perfLog.textContent = '✓ Reclaimed ' + (d.reclaimedFormatted || '0 B') + ' across ' + (d.deletedVideos?.length || 0) + ' files';
+          pollStorageStatus();
+          fetchLibrary();
+          pollPerfStatus();
+        } else {
+          perfLog.textContent = '✗ Clear failed: ' + (d.error || 'Error');
+        }
+      } catch (err) {
+        perfLog.textContent = '✗ Clear error: ' + err.message;
+      }
+    });
+
+    btnPerfViewReport.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/perf/report');
+        if (!res.ok) {
+          alert('No report generated yet. Run a performance test first.');
+          return;
+        }
+        const d = await res.json();
+        const win = window.open('', '_blank');
+        if (win) {
+          win.document.write('<html><head><title>V-FEED Performance Report</title><style>body{font-family:monospace;padding:2rem;background:#090a0d;color:#e8ecf2;line-height:1.6;white-space:pre-wrap;}</style></head><body>' + d.content.replace(/</g, '&lt;') + '</body></html>');
+          win.document.close();
+        }
+      } catch (err) {
+        alert('Could not open report: ' + err.message);
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        btnPerfStop.click();
+      }
+    });
+
+    async function pollPerfStatus() {
+      try {
+        const res = await fetch('/api/perf/status');
+        if (!res.ok) return;
+        const { status: s } = await res.json();
+        if (!s) return;
+
+        if (s.isRunning) {
+          perfBadge.textContent = 'RECORDING';
+          perfBadge.className = 'badge yt';
+        } else {
+          perfBadge.textContent = 'IDLE';
+          perfBadge.className = 'badge';
+        }
+
+        perfElapsed.textContent = s.elapsedFormatted || '00:00:00';
+        perfRequests.textContent = s.totalRequests + ' calls';
+        perfQuota.textContent = s.totalQuotaUnits + ' units (' + s.quotaUnitsPerHour + '/hr)';
+        perfVideos.textContent = '+' + s.videosDownloadedCount + ' videos';
+        perfStorage.textContent = '+' + s.addedStorageFormatted + ' (' + s.storageMbPerHour + ' MB/hr)';
+        perfRunway.textContent = '~' + s.projectedHoursUntilQuotaCap + ' hrs';
+      } catch {
+        /* ignore */
+      }
+    }
+
     fetchLibrary();
     pollQuotaStatus();
     pollStorageStatus();
+    pollPerfStatus();
     setInterval(pollIngestStatus, 1500);
     setInterval(pollQuotaStatus, 3000);
     setInterval(pollStorageStatus, 3000);
+    setInterval(pollPerfStatus, 2000);
     setInterval(fetchLibrary, 10000);
   </script>
 </body>
