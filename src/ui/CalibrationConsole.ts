@@ -12,6 +12,7 @@ import {
 } from '../core/StateManager';
 import { computeAllScreenCorners, MATRIX_QUADRANTS } from '../rendering/MatrixSplitter';
 import { syncChannel, type TelemetryTickPayload } from '../core/SyncChannel';
+import { SCREEN_POSE_MAP } from '../vision/BroadcastQuerySynthesizer';
 
 const STORAGE_KEY = 'vfeed-calibration';
 
@@ -211,7 +212,15 @@ export class CalibrationConsole {
       this.peopleController.people = `${t.tracking.personCount} detected`;
     }
     if (this.interactionReadouts) {
-      this.interactionReadouts.pose = t.interaction.activePose;
+      const activeP = t.interaction.activePose;
+      if (activeP && activeP !== 'NONE') {
+        const scr = Object.entries(SCREEN_POSE_MAP).find(([_, p]) => p === activeP);
+        this.interactionReadouts.pose = scr
+          ? `[CRT 0${Number(scr[0]) + 1}] ${activeP.replace('POSE_', '')}`
+          : activeP;
+      } else {
+        this.interactionReadouts.pose = 'NONE';
+      }
       this.interactionReadouts.density = t.interaction.densityState;
       this.interactionReadouts.kinetics = `${t.interaction.kineticState} (${Math.round(t.interaction.kineticEnergy * 100)}%)`;
       this.interactionReadouts.chroma = t.interaction.chromaState;
@@ -601,6 +610,70 @@ export class CalibrationConsole {
         'resetTitles',
       )
       .name('Reset Default Titles');
+
+    // Screen Pose Guides (CRT 01 - 06)
+    const poseGuideFolder = framesFolder.addFolder('Screen Pose Guides (6 TVs)');
+    poseGuideFolder.open();
+
+    poseGuideFolder
+      .add(frm, 'showPoseGuides')
+      .name('Show Pose Guides')
+      .onChange((v: boolean) => {
+        store.setFrames({ showPoseGuides: v });
+        this.broadcastPatch({ frames: { showPoseGuides: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideOpacity', 0.1, 1.0, 0.05)
+      .name('Guide Opacity')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideOpacity: v });
+        this.broadcastPatch({ frames: { poseGuideOpacity: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideScale', 0.25, 1.5, 0.05)
+      .name('Guide Scale')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideScale: v });
+        this.broadcastPatch({ frames: { poseGuideScale: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuidePosition', ['bottom-right', 'top-right', 'center'])
+      .name('Guide Position')
+      .onChange((v: 'bottom-right' | 'top-right' | 'center') => {
+        store.setFrames({ poseGuidePosition: v });
+        this.broadcastPatch({ frames: { poseGuidePosition: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'highlightActivePose')
+      .name('Highlight Active Pose')
+      .onChange((v: boolean) => {
+        store.setFrames({ highlightActivePose: v });
+        this.broadcastPatch({ frames: { highlightActivePose: v } });
+        this.persist();
+      });
+
+    // Pose Assignment Roster
+    const poseRoster = poseGuideFolder.addFolder('Pose Assignment Roster');
+    poseRoster.close();
+    const rosterList = [
+      { screen: 'CRT [01] (Top-Left)', pose: 'RABBIT EARS (VHF Dipole)' },
+      { screen: 'CRT [02] (Top-Right)', pose: 'DIAL TUNER (Yagi Point)' },
+      { screen: 'CRT [03] (Mid-Left)', pose: 'TV SHOCK (Commercial Gasp)' },
+      { screen: 'CRT [04] (Mid-Right)', pose: 'WINGSUIT (Horizontal Dipole)' },
+      { screen: 'CRT [05] (Bot-Left)', pose: 'UHF LOOP (Circular Halo)' },
+      { screen: 'CRT [06] (Bot-Right)', pose: 'SIGNAL LOCK (Human Capacitor)' },
+    ];
+    for (const item of rosterList) {
+      poseRoster.add({ info: item.pose }, 'info').name(item.screen).disable();
+    }
 
     // Bottom Query Message (CRT 01 - 06)
     this.queryState = {

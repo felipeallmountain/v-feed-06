@@ -7,11 +7,36 @@
  * News Broadcasts, and Media Archaeology.
  */
 
-export type SemanticPose = 'POSE_ANTENNA' | 'POSE_SURPRISE' | 'POSE_WINGSUIT' | 'NONE';
+export type SemanticPose =
+  | 'POSE_ANTENNA'
+  | 'POSE_DIAL_TUNER'
+  | 'POSE_SURPRISE'
+  | 'POSE_WINGSUIT'
+  | 'POSE_LOOP_HALO'
+  | 'POSE_SIGNAL_LOCK'
+  | 'NONE';
 export type AudienceDensity = 'SOLO' | 'DUO' | 'GROUP' | 'EMPTY';
 export type KineticState = 'HIGH_MOTION' | 'RHYTHMIC' | 'STILLNESS' | 'STEADY';
 export type SpatialProximity = 'CLOSE' | 'MEDIUM' | 'FAR';
 export type ClothingChroma = 'WARM_RED' | 'DARK_NEUTRAL' | 'COOL_BLUE' | 'NEUTRAL';
+
+export const SCREEN_POSE_MAP: Record<number, Exclude<SemanticPose, 'NONE'>> = {
+  0: 'POSE_ANTENNA',     // CRT [01] Top-Left
+  1: 'POSE_DIAL_TUNER',  // CRT [02] Top-Right
+  2: 'POSE_SURPRISE',    // CRT [03] Mid-Left
+  3: 'POSE_WINGSUIT',    // CRT [04] Mid-Right
+  4: 'POSE_LOOP_HALO',   // CRT [05] Bot-Left
+  5: 'POSE_SIGNAL_LOCK', // CRT [06] Bot-Right
+};
+
+export const POSE_DISPLAY_NAMES: Record<Exclude<SemanticPose, 'NONE'>, { title: string; subtitle: string }> = {
+  POSE_ANTENNA: { title: 'RABBIT EARS', subtitle: 'VHF DIPOLE' },
+  POSE_DIAL_TUNER: { title: 'DIAL TUNER', subtitle: 'YAGI POINT' },
+  POSE_SURPRISE: { title: 'TV SHOCK', subtitle: 'COMMERCIAL GASP' },
+  POSE_WINGSUIT: { title: 'WINGSUIT', subtitle: 'HORIZONTAL DIPOLE' },
+  POSE_LOOP_HALO: { title: 'UHF LOOP', subtitle: 'CIRCULAR HALO' },
+  POSE_SIGNAL_LOCK: { title: 'SIGNAL LOCK', subtitle: 'HUMAN CAPACITOR' },
+};
 
 export interface InteractionFeatureState {
   pose: SemanticPose;
@@ -41,6 +66,13 @@ const POSE_QUERIES: Record<Exclude<SemanticPose, 'NONE'>, string[]> = {
     '#shorts vintage antenna television reception',
     '#shorts 1980s television sign off static',
   ],
+  POSE_DIAL_TUNER: [
+    '#shorts vintage tv rotary channel selector knob',
+    '#shorts clicking channel selector knob vintage tv',
+    '#shorts 1970s television tuner knob click',
+    '#shorts manual tuning vintage crt television',
+    '#shorts retro television antenna rotor controller',
+  ],
   POSE_SURPRISE: [
     '#shorts classic tv news bloopers live',
     '#shorts vintage sitcom behind the scenes gags',
@@ -54,6 +86,20 @@ const POSE_QUERIES: Record<Exclude<SemanticPose, 'NONE'>, string[]> = {
     '#shorts 80s aerial acrobatics television',
     '#shorts vintage aviation airshow retro tv',
     '#shorts 1970s hang gliding television report',
+  ],
+  POSE_LOOP_HALO: [
+    '#shorts vintage uhf television broadcast test pattern',
+    '#shorts uhf channel static television reception',
+    '#shorts retro tv bow tie loop antenna',
+    '#shorts vintage broadcast test card color bars',
+    '#shorts 1980s public access television channel',
+  ],
+  POSE_SIGNAL_LOCK: [
+    '#shorts 1970s television sign off national anthem static',
+    '#shorts retro television transmission tower crystal clear',
+    '#shorts vintage broadcast station identification sign on',
+    '#shorts analog television audio tone test pattern',
+    '#shorts vintage broadcast test pattern signal lock',
   ],
 };
 

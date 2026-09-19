@@ -142,6 +142,11 @@ export interface FrameState {
   customQueryText: string;
   showCrosshairs: boolean;
   showCornerBrackets: boolean;
+  showPoseGuides: boolean;
+  poseGuideOpacity: number;
+  poseGuideScale: number;
+  poseGuidePosition: 'bottom-right' | 'top-right' | 'center';
+  highlightActivePose: boolean;
   rotation: number; // Global frame rotation in degrees (-180 to +180)
   offsetX: number; // Global frame X offset (-0.5 to +0.5)
   offsetY: number; // Global frame Y offset (-0.5 to +0.5)
@@ -474,6 +479,11 @@ export const useAppStore = createStore<AppState>((set) => ({
     customQueryText: '',
     showCrosshairs: true,
     showCornerBrackets: true,
+    showPoseGuides: true,
+    poseGuideOpacity: 0.70,
+    poseGuideScale: 0.60,
+    poseGuidePosition: 'bottom-right',
+    highlightActivePose: true,
     rotation: 0,
     offsetX: 0,
     offsetY: 0,

@@ -1,5 +1,6 @@
 import { useAppStore } from '../core/StateManager';
 import type { TrackerFrame } from '../vision/MediaPipeTracker';
+import { SCREEN_POSE_MAP } from '../vision/BroadcastQuerySynthesizer';
 
 export class DebugView {
   private canvas: HTMLCanvasElement;
@@ -285,7 +286,9 @@ export class DebugView {
       let poseText = 'POSE: NONE';
       if (inter.activePose !== 'NONE') {
         poseBadgeColor = '#ffb703';
-        poseText = `POSE: ${inter.activePose.replace('POSE_', '')}`;
+        const scr = Object.entries(SCREEN_POSE_MAP).find(([_, p]) => p === inter.activePose);
+        const scrTag = scr ? `[CRT 0${Number(scr[0]) + 1}] ` : '';
+        poseText = `POSE: ${scrTag}${inter.activePose.replace('POSE_', '')}`;
       }
       this.ctx.fillStyle = poseBadgeColor;
       this.ctx.font = 'bold 9px monospace';

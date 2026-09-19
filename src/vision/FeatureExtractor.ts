@@ -226,39 +226,88 @@ export class FeatureExtractor {
       return 'NONE';
     }
 
+    const leftHip = lm[23];
+    const rightHip = lm[24];
+
     const headY = Math.min(nose.y, leftEye?.y ?? nose.y, rightEye?.y ?? nose.y);
     const shoulderWidth = Math.abs(leftShoulder.x - rightShoulder.x);
     const shoulderAvgY = (leftShoulder.y + rightShoulder.y) * 0.5;
+    const hipAvgY = leftHip && rightHip ? (leftHip.y + rightHip.y) * 0.5 : shoulderAvgY + 0.38;
+    const chestCenterX = (leftShoulder.x + rightShoulder.x) * 0.5;
 
-    // 1. POSE_ANTENNA: Both hands raised pointing upwards above head
+    const wristDist = Math.hypot(leftWrist.x - rightWrist.x, leftWrist.y - rightWrist.y);
+    const wristSpanX = Math.abs(leftWrist.x - rightWrist.x);
+    const wristDy = Math.abs(leftWrist.y - rightWrist.y);
+
+    // 1. POSE_LOOP_HALO (UHF Loop): Both hands curved overhead in a circular loop
+    const bothWristsOverhead = leftWrist.y < headY - 0.02 && rightWrist.y < headY - 0.02;
+    const handsOverheadTouching = wristDist < 0.17;
+    const elbowsCurvedOutward =
+      leftElbow &&
+      rightElbow &&
+      leftElbow.x < leftShoulder.x - 0.04 &&
+      rightElbow.x > rightShoulder.x + 0.04;
+
+    if (bothWristsOverhead && handsOverheadTouching && elbowsCurvedOutward) {
+      return 'POSE_LOOP_HALO';
+    }
+
+    // 2. POSE_ANTENNA (Rabbit Ears): Both arms raised high in a wide V-dipole
     const bothWristsAboveHead = leftWrist.y < headY - 0.04 && rightWrist.y < headY - 0.04;
+    const wideAntennaSpan = wristSpanX > Math.max(0.24, shoulderWidth * 1.05);
     const elbowsElevated =
       leftElbow &&
       rightElbow &&
-      leftElbow.y < shoulderAvgY + 0.08 &&
-      rightElbow.y < shoulderAvgY + 0.08;
+      leftElbow.y < shoulderAvgY + 0.10 &&
+      rightElbow.y < shoulderAvgY + 0.10;
 
-    if (bothWristsAboveHead && elbowsElevated) {
+    if (bothWristsAboveHead && wideAntennaSpan && elbowsElevated) {
       return 'POSE_ANTENNA';
     }
 
-    // 2. POSE_SURPRISE: Hands covering face / gasping posture
+    // 3. POSE_DIAL_TUNER (Rotary Dial / Directional Yagi): Asymmetric diagonal pointing
+    if (wristDy > 0.26) {
+      const isLeftHigh = leftWrist.y < rightWrist.y;
+      const highWrist = isLeftHigh ? leftWrist : rightWrist;
+      const lowWrist = isLeftHigh ? rightWrist : leftWrist;
+      const highShoulder = isLeftHigh ? leftShoulder : rightShoulder;
+
+      const highArmExtended = highWrist.y < highShoulder.y - 0.10 && Math.abs(highWrist.x - highShoulder.x) > 0.14;
+      const lowArmRelaxed = lowWrist.y > shoulderAvgY + 0.10;
+
+      if (highArmExtended && lowArmRelaxed) {
+        return 'POSE_DIAL_TUNER';
+      }
+    }
+
+    // 4. POSE_SURPRISE (Commercial Shock): Hands covering face/cheeks
     const distLeftToFace = Math.hypot(leftWrist.x - nose.x, leftWrist.y - nose.y);
     const distRightToFace = Math.hypot(rightWrist.x - nose.x, rightWrist.y - nose.y);
-    const handsNearFace = distLeftToFace < 0.16 && distRightToFace < 0.16;
-    const handsCloseTogether = Math.hypot(leftWrist.x - rightWrist.x, leftWrist.y - rightWrist.y) < 0.20;
+    const handsNearFace = distLeftToFace < 0.17 && distRightToFace < 0.17;
+    const handsFaceClose = wristDist < 0.22;
+    const handsAboveShoulders = leftWrist.y < shoulderAvgY + 0.04 && rightWrist.y < shoulderAvgY + 0.04;
 
-    if (handsNearFace && handsCloseTogether) {
+    if (handsNearFace && handsFaceClose && handsAboveShoulders) {
       return 'POSE_SURPRISE';
     }
 
-    // 3. POSE_WINGSUIT: Arms wide open horizontally in a cross / T-pose position
-    const wristSpan = Math.abs(leftWrist.x - rightWrist.x);
-    const wideSpan = wristSpan > Math.max(shoulderWidth * 2.2, 0.45);
+    // 5. POSE_SIGNAL_LOCK (Human Capacitor): Hands clasped flat over center chest/sternum
+    const handsAtChestHeight =
+      leftWrist.y > shoulderAvgY + 0.04 &&
+      leftWrist.y < hipAvgY - 0.05 &&
+      rightWrist.y > shoulderAvgY + 0.04 &&
+      rightWrist.y < hipAvgY - 0.05;
+    const handsClasped = wristDist < 0.15;
+    const handsCenteredAtSternum = Math.abs((leftWrist.x + rightWrist.x) * 0.5 - chestCenterX) < 0.12;
 
-    const leftWristLevel = Math.abs(leftWrist.y - leftShoulder.y) < 0.14;
-    const rightWristLevel = Math.abs(rightWrist.y - rightShoulder.y) < 0.14;
+    if (handsAtChestHeight && handsClasped && handsCenteredAtSternum) {
+      return 'POSE_SIGNAL_LOCK';
+    }
 
+    // 6. POSE_WINGSUIT (Horizontal Dipole / T-Pose): Arms wide open horizontally
+    const wideSpan = wristSpanX > Math.max(shoulderWidth * 2.1, 0.46);
+    const leftWristLevel = Math.abs(leftWrist.y - leftShoulder.y) < 0.13;
+    const rightWristLevel = Math.abs(rightWrist.y - rightShoulder.y) < 0.13;
     const leftElbowStraight = leftElbow ? Math.abs(leftElbow.y - leftShoulder.y) < 0.12 : true;
     const rightElbowStraight = rightElbow ? Math.abs(rightElbow.y - rightShoulder.y) < 0.12 : true;
 

@@ -2,6 +2,7 @@ import { getViewportSize, MAX_DEVICE_PIXEL_RATIO } from '../core/constants';
 import { useAppStore, type SkeletonStyle } from '../core/StateManager';
 import { computeAllScreenCorners } from './MatrixSplitter';
 import type { TrackerFrame } from '../vision/MediaPipeTracker';
+import { SCREEN_POSE_MAP, POSE_DISPLAY_NAMES } from '../vision/BroadcastQuerySynthesizer';
 
 const POSE_CONNECTIONS: Array<[number, number]> = [
   // Torso & Shoulders
@@ -770,6 +771,337 @@ export class SkeletonOverlay {
   }
 
   /**
+   * Draws the 6 signature Human Antenna pose guides directly on the 6 CRT monitors.
+   * Each pose is rendered as a clean, single-line phosphor vector stick figure
+   * transformed through the screen's 4-corner keystone pinning and CRT tube barrel curvature.
+   * Highlights in intense phosphor green with a signal lock reticle when the spectator performs that pose.
+   */
+  private drawScreenPoseGuides(w: number, h: number, palette: StyleConfig): void {
+    const store = useAppStore.getState();
+    const sh = store.shaders;
+    const frames = store.frames;
+    const inter = store.interaction;
+    if (!sh.matrixSplit || !frames.showPoseGuides) return;
+
+    const uvCorners = computeAllScreenCorners(
+      sh.bezelWidthX,
+      sh.bezelWidthY,
+      sh.bezelOuter,
+      sh.cornerOffsets,
+      sh.screenOffsets,
+      sh.screenFlips,
+      sh.globalRotation,
+      sh.globalFineRotation,
+      sh.globalOffsetX,
+      sh.globalOffsetY,
+    );
+
+    const inset = Math.max(0.005, frames.inset);
+    const effectiveCurvature =
+      frames.followTubeCurvature && sh.tubeCurve
+        ? sh.curvature * frames.curvatureScale
+        : 0;
+
+    const baseLineWidth = Math.max(1.2, frames.thickness * (w / 1080) * 0.85);
+    const guideScale = Math.max(0.25, Math.min(1.5, frames.poseGuideScale || 0.60));
+    const now = performance.now();
+
+    this.ctx.save();
+    this.ctx.lineCap = 'round';
+    this.ctx.lineJoin = 'round';
+
+    for (let i = 0; i < 6; i++) {
+      const base = i * 4;
+      const uvBL = uvCorners[base + 0];
+      const uvBR = uvCorners[base + 1];
+      const uvTR = uvCorners[base + 2];
+      const uvTL = uvCorners[base + 3];
+
+      if (!uvBL || !uvBR || !uvTR || !uvTL) continue;
+
+      const quad: QuadPoints = {
+        tl: { x: uvTL.x * w, y: (1.0 - uvTL.y) * h },
+        tr: { x: uvTR.x * w, y: (1.0 - uvTR.y) * h },
+        br: { x: uvBR.x * w, y: (1.0 - uvBR.y) * h },
+        bl: { x: uvBL.x * w, y: (1.0 - uvBL.y) * h },
+      };
+
+      const pose = SCREEN_POSE_MAP[i];
+      if (!pose) continue;
+      const poseMeta = POSE_DISPLAY_NAMES[pose] ?? { title: `POSE ${i + 1}`, subtitle: 'ANTENNA' };
+
+      const isScreenActive = inter.activePose === pose;
+      const isHoldingThis = inter.candidateState === `POSE:${pose}`;
+      const holdProgress = isHoldingThis ? inter.holdProgress : 0;
+
+      // Determine anchor point in normalized screen coordinates (u0, v0)
+      let u0 = 0.80;
+      let v0 = 0.72;
+      if (frames.poseGuidePosition === 'center') {
+        u0 = 0.50;
+        v0 = 0.50;
+      } else if (frames.poseGuidePosition === 'top-right') {
+        u0 = 0.80;
+        v0 = 0.28;
+      } else {
+        // bottom-right: if query message is shown, lift slightly
+        v0 = frames.showQueryMessage ? 0.68 : 0.76;
+      }
+
+      const s = 0.085 * guideScale;
+
+      // Map a relative offset (du, dv) from anchor (u0, v0) through curved quad mapping
+      const p = (du: number, dv: number) => {
+        const u = Math.min(0.96, Math.max(0.04, u0 + du));
+        const v = Math.min(0.96, Math.max(0.04, v0 + dv));
+        return this.getCurvedQuadPoint(u, v, quad, inset, effectiveCurvature);
+      };
+
+      // Styling parameters
+      const pulse = isScreenActive ? Math.sin(now * 0.008) * 0.2 + 0.9 : 1.0;
+      const alpha = isScreenActive
+        ? 1.0
+        : Math.min(Math.max(frames.poseGuideOpacity ?? 0.70, 0.1), 1.0);
+      const strokeColor = isScreenActive ? '#3ddc97' : palette.stroke;
+      const glowColor = isScreenActive ? '#3ddc97' : palette.glow;
+      const lineWidth = isScreenActive ? baseLineWidth * 2.2 * pulse : baseLineWidth;
+
+      this.ctx.save();
+      this.ctx.globalAlpha = alpha;
+      this.ctx.strokeStyle = strokeColor;
+      this.ctx.fillStyle = strokeColor;
+      this.ctx.lineWidth = lineWidth;
+      this.ctx.shadowBlur = isScreenActive ? 18 : 6;
+      this.ctx.shadowColor = glowColor;
+
+      // --- 1. Draw Reticle / Signal Lock Ring (around figure) ---
+      const pCenter = p(0, 0);
+      const pRetTop = p(0, -1.35 * s);
+      const retRadius = Math.hypot(pRetTop.x - pCenter.x, pRetTop.y - pCenter.y);
+
+      if (isScreenActive || isHoldingThis) {
+        // Active Pulsing Lock Ring
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.arc(pCenter.x, pCenter.y, retRadius * 1.08, 0, Math.PI * 2);
+        this.ctx.strokeStyle = '#3ddc97';
+        this.ctx.lineWidth = Math.max(1.5, baseLineWidth * 1.4);
+        this.ctx.stroke();
+
+        // Cross ticks on lock ring
+        const tick = retRadius * 0.28;
+        this.ctx.beginPath();
+        this.ctx.moveTo(pCenter.x - retRadius - tick, pCenter.y);
+        this.ctx.lineTo(pCenter.x - retRadius + tick * 0.5, pCenter.y);
+        this.ctx.moveTo(pCenter.x + retRadius - tick * 0.5, pCenter.y);
+        this.ctx.lineTo(pCenter.x + retRadius + tick, pCenter.y);
+        this.ctx.moveTo(pCenter.x, pCenter.y - retRadius - tick);
+        this.ctx.lineTo(pCenter.x, pCenter.y - retRadius + tick * 0.5);
+        this.ctx.moveTo(pCenter.x, pCenter.y + retRadius - tick * 0.5);
+        this.ctx.lineTo(pCenter.x, pCenter.y + retRadius + tick);
+        this.ctx.stroke();
+
+        // Hold Progress Arc Meter
+        if (holdProgress > 0) {
+          this.ctx.beginPath();
+          this.ctx.arc(
+            pCenter.x,
+            pCenter.y,
+            retRadius * 1.25,
+            -Math.PI / 2,
+            -Math.PI / 2 + Math.PI * 2 * holdProgress,
+          );
+          this.ctx.strokeStyle = '#ffb703';
+          this.ctx.lineWidth = Math.max(2.5, baseLineWidth * 2.0);
+          this.ctx.stroke();
+        }
+        this.ctx.restore();
+      } else {
+        // Subtle inactive dotted/faint boundary
+        this.ctx.save();
+        this.ctx.globalAlpha = alpha * 0.35;
+        this.ctx.setLineDash([3, 4]);
+        this.ctx.beginPath();
+        this.ctx.arc(pCenter.x, pCenter.y, retRadius, 0, Math.PI * 2);
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+
+      // --- 2. Draw Stick Figure Joints & Single Lines ---
+      // Head
+      const pHead = p(0, -0.62 * s);
+      const pHeadTop = p(0, -0.80 * s);
+      const headR = Math.max(2.5, Math.hypot(pHeadTop.x - pHead.x, pHeadTop.y - pHead.y));
+
+      this.ctx.beginPath();
+      this.ctx.arc(pHead.x, pHead.y, headR, 0, Math.PI * 2);
+      this.ctx.stroke();
+
+      // Spine (Neck to Pelvis)
+      const pNeck = p(0, -0.32 * s);
+      const pPelvis = p(0, +0.20 * s);
+      this.ctx.beginPath();
+      this.ctx.moveTo(pNeck.x, pNeck.y);
+      this.ctx.lineTo(pPelvis.x, pPelvis.y);
+      this.ctx.stroke();
+
+      // Shoulder Bar
+      const pLShoulder = p(-0.30 * s, -0.30 * s);
+      const pRShoulder = p(+0.30 * s, -0.30 * s);
+      this.ctx.beginPath();
+      this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+      this.ctx.lineTo(pRShoulder.x, pRShoulder.y);
+      this.ctx.stroke();
+
+      // Legs
+      const pLHip = p(-0.16 * s, +0.20 * s);
+      const pRHip = p(+0.16 * s, +0.20 * s);
+      const pLKnee = p(-0.24 * s, +0.55 * s);
+      const pRKnee = p(+0.24 * s, +0.55 * s);
+      const pLFoot = p(-0.32 * s, +0.92 * s);
+      const pRFoot = p(+0.32 * s, +0.92 * s);
+
+      this.ctx.beginPath();
+      this.ctx.moveTo(pLHip.x, pLHip.y);
+      this.ctx.lineTo(pLKnee.x, pLKnee.y);
+      this.ctx.lineTo(pLFoot.x, pLFoot.y);
+      this.ctx.moveTo(pRHip.x, pRHip.y);
+      this.ctx.lineTo(pRKnee.x, pRKnee.y);
+      this.ctx.lineTo(pRFoot.x, pRFoot.y);
+      this.ctx.stroke();
+
+      // Arms for each of the 6 signature poses
+      this.ctx.beginPath();
+      switch (pose) {
+        case 'POSE_ANTENNA': {
+          // CRT 01: Both arms high in wide V-dipole
+          const pLElbow = p(-0.55 * s, -0.65 * s);
+          const pLWrist = p(-0.80 * s, -1.05 * s);
+          const pRElbow = p(+0.55 * s, -0.65 * s);
+          const pRWrist = p(+0.80 * s, -1.05 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+        case 'POSE_DIAL_TUNER': {
+          // CRT 02: Left arm low, right arm pointing 45° up
+          const pLElbow = p(-0.40 * s, -0.05 * s);
+          const pLWrist = p(-0.25 * s, +0.22 * s);
+          const pRElbow = p(+0.60 * s, -0.65 * s);
+          const pRWrist = p(+0.95 * s, -1.05 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+        case 'POSE_SURPRISE': {
+          // CRT 03: Hands clutching cheeks/face, elbows down
+          const pLElbow = p(-0.38 * s, -0.28 * s);
+          const pLWrist = p(-0.16 * s, -0.58 * s);
+          const pRElbow = p(+0.38 * s, -0.28 * s);
+          const pRWrist = p(+0.16 * s, -0.58 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+        case 'POSE_WINGSUIT': {
+          // CRT 04: Arms wide horizontal T-pose
+          const pLElbow = p(-0.60 * s, -0.30 * s);
+          const pLWrist = p(-1.05 * s, -0.30 * s);
+          const pRElbow = p(+0.60 * s, -0.30 * s);
+          const pRWrist = p(+1.05 * s, -0.30 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+        case 'POSE_LOOP_HALO': {
+          // CRT 05: Arms curved overhead forming circular loop
+          const pLElbow = p(-0.58 * s, -0.68 * s);
+          const pLWrist = p(-0.04 * s, -0.98 * s);
+          const pRElbow = p(+0.58 * s, -0.68 * s);
+          const pRWrist = p(+0.04 * s, -0.98 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          // Overhead connecting bridge / loop
+          this.ctx.moveTo(pLWrist.x, pLWrist.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+        case 'POSE_SIGNAL_LOCK': {
+          // CRT 06: Hands clasped flat over center chest/sternum
+          const pLElbow = p(-0.42 * s, -0.06 * s);
+          const pLWrist = p(0, -0.04 * s);
+          const pRElbow = p(+0.42 * s, -0.06 * s);
+          const pRWrist = p(0, -0.04 * s);
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pRElbow.x, pRElbow.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          break;
+        }
+      }
+      this.ctx.stroke();
+
+      // --- 3. Draw Monospace Pose Badge underneath ---
+      const edgeDx = quad.tr.x - quad.tl.x;
+      const edgeDy = quad.tr.y - quad.tl.y;
+      const textAngle = Math.atan2(edgeDy, edgeDx);
+
+      const pLabel = p(0, 1.18 * s);
+      const fontSize = Math.max(8, Math.round(9 * (w / 1080) * guideScale));
+      const badgeText = `[0${i + 1}] ${poseMeta.title}`;
+
+      this.ctx.save();
+      this.ctx.translate(pLabel.x, pLabel.y);
+      this.ctx.rotate(textAngle);
+      this.ctx.font = `bold ${fontSize}px monospace`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'top';
+
+      const labelW = this.ctx.measureText(badgeText).width;
+
+      // Badge background pill
+      this.ctx.save();
+      this.ctx.shadowBlur = 0;
+      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.85)';
+      this.ctx.fillRect(-labelW / 2 - 4, -2, labelW + 8, fontSize + 5);
+      this.ctx.strokeStyle = strokeColor;
+      this.ctx.lineWidth = 1;
+      this.ctx.strokeRect(-labelW / 2 - 4, -2, labelW + 8, fontSize + 5);
+      this.ctx.restore();
+
+      this.ctx.fillStyle = strokeColor;
+      this.ctx.fillText(badgeText, 0, 0);
+      this.ctx.restore();
+
+      this.ctx.restore();
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
    * Draws high-contrast corner pinning target guides, bullseye markers, crosshairs,
    * dashed screen bounds, and corner labels (BL, BR, TR, TL) for all 6 screens.
    */
@@ -940,7 +1272,12 @@ export class SkeletonOverlay {
       this.drawScreenQueryMessages(w, h, palette);
     }
 
-    // 4. Draw Corner Target Guides (When Show Corner Target Guides is enabled in calibration)
+    // 4. Draw Screen Pose Guides (Single lines following frames on the 6 TVs)
+    if (useAppStore.getState().frames.showPoseGuides) {
+      this.drawScreenPoseGuides(w, h, palette);
+    }
+
+    // 5. Draw Corner Target Guides (When Show Corner Target Guides is enabled in calibration)
     if (shaders.showCornerHandles && shaders.matrixSplit) {
       this.drawCornerTargetGuides(w, h);
     }
