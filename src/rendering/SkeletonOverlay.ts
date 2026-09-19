@@ -802,8 +802,13 @@ export class SkeletonOverlay {
         ? sh.curvature * frames.curvatureScale
         : 0;
 
-    const baseLineWidth = Math.max(1.2, frames.thickness * (w / 1080) * 0.85);
-    const guideScale = Math.max(0.25, Math.min(1.5, frames.poseGuideScale || 0.60));
+    // Decoupled, crisp line thickness tuned for low-resolution CRT / composite displays
+    const guideScale = Math.max(0.20, Math.min(2.5, frames.poseGuideScale || 0.60));
+    const figThick = frames.poseGuideFigureThickness ?? frames.poseGuideThickness ?? 1.2;
+    const retThick = frames.poseGuideReticleThickness ?? frames.poseGuideThickness ?? 1.2;
+
+    const baseFigLineWidth = Math.max(0.5, Math.min(4.0, figThick * (w / 1920) * 1.35));
+    const baseRetLineWidth = Math.max(0.5, Math.min(4.0, retThick * (w / 1920) * 1.35));
     const now = performance.now();
 
     this.ctx.save();
@@ -836,7 +841,7 @@ export class SkeletonOverlay {
 
       // Determine anchor point in normalized screen coordinates (u0, v0)
       let u0 = 0.80;
-      let v0 = 0.72;
+      let v0 = 0.70;
       if (frames.poseGuidePosition === 'center') {
         u0 = 0.50;
         v0 = 0.50;
@@ -845,8 +850,12 @@ export class SkeletonOverlay {
         v0 = 0.28;
       } else {
         // bottom-right: if query message is shown, lift slightly
-        v0 = frames.showQueryMessage ? 0.68 : 0.76;
+        v0 = frames.showQueryMessage ? 0.66 : 0.74;
       }
+
+      // Apply fine calibration offsets
+      u0 += frames.poseGuideOffsetX ?? 0;
+      v0 += frames.poseGuideOffsetY ?? 0;
 
       const s = 0.085 * guideScale;
 
@@ -857,47 +866,51 @@ export class SkeletonOverlay {
         return this.getCurvedQuadPoint(u, v, quad, inset, effectiveCurvature);
       };
 
-      // Styling parameters
-      const pulse = isScreenActive ? Math.sin(now * 0.008) * 0.2 + 0.9 : 1.0;
+      // Styling parameters: sharp phosphor styling, minimal blur to prevent composite smearing
+      const pulse = isScreenActive ? Math.sin(now * 0.008) * 0.15 + 0.95 : 1.0;
       const alpha = isScreenActive
         ? 1.0
         : Math.min(Math.max(frames.poseGuideOpacity ?? 0.70, 0.1), 1.0);
       const strokeColor = isScreenActive ? '#3ddc97' : palette.stroke;
       const glowColor = isScreenActive ? '#3ddc97' : palette.glow;
-      const lineWidth = isScreenActive ? baseLineWidth * 2.2 * pulse : baseLineWidth;
+
+      // Controlled line widths
+      const figLineWidth = isScreenActive ? baseFigLineWidth * 1.35 * pulse : baseFigLineWidth;
 
       this.ctx.save();
       this.ctx.globalAlpha = alpha;
       this.ctx.strokeStyle = strokeColor;
       this.ctx.fillStyle = strokeColor;
-      this.ctx.lineWidth = lineWidth;
-      this.ctx.shadowBlur = isScreenActive ? 18 : 6;
+      this.ctx.lineWidth = figLineWidth;
+      // Low shadow blur to keep high-frequency phosphor edges razor sharp on CRT scanlines
+      this.ctx.shadowBlur = isScreenActive ? 4 : 0;
       this.ctx.shadowColor = glowColor;
 
-      // --- 1. Draw Reticle / Signal Lock Ring (around figure) ---
-      const pCenter = p(0, 0);
-      const pRetTop = p(0, -1.35 * s);
+      // --- 1. Draw Reticle / Signal Lock Ring (with ample clearance around figure) ---
+      const pCenter = p(0, -0.15 * s);
+      const pRetTop = p(0, -1.45 * s);
       const retRadius = Math.hypot(pRetTop.x - pCenter.x, pRetTop.y - pCenter.y);
 
       if (isScreenActive || isHoldingThis) {
-        // Active Pulsing Lock Ring
+        // Active Signal Lock Ring
         this.ctx.save();
         this.ctx.beginPath();
-        this.ctx.arc(pCenter.x, pCenter.y, retRadius * 1.08, 0, Math.PI * 2);
+        this.ctx.arc(pCenter.x, pCenter.y, retRadius, 0, Math.PI * 2);
         this.ctx.strokeStyle = '#3ddc97';
-        this.ctx.lineWidth = Math.max(1.5, baseLineWidth * 1.4);
+        this.ctx.lineWidth = Math.max(1.0, baseRetLineWidth * 1.25);
         this.ctx.stroke();
 
-        // Cross ticks on lock ring
-        const tick = retRadius * 0.28;
+        // Corner cross ticks on lock ring
+        const tick = retRadius * 0.22;
+        this.ctx.lineWidth = Math.max(0.8, baseRetLineWidth * 1.0);
         this.ctx.beginPath();
         this.ctx.moveTo(pCenter.x - retRadius - tick, pCenter.y);
-        this.ctx.lineTo(pCenter.x - retRadius + tick * 0.5, pCenter.y);
-        this.ctx.moveTo(pCenter.x + retRadius - tick * 0.5, pCenter.y);
+        this.ctx.lineTo(pCenter.x - retRadius + tick * 0.4, pCenter.y);
+        this.ctx.moveTo(pCenter.x + retRadius - tick * 0.4, pCenter.y);
         this.ctx.lineTo(pCenter.x + retRadius + tick, pCenter.y);
         this.ctx.moveTo(pCenter.x, pCenter.y - retRadius - tick);
-        this.ctx.lineTo(pCenter.x, pCenter.y - retRadius + tick * 0.5);
-        this.ctx.moveTo(pCenter.x, pCenter.y + retRadius - tick * 0.5);
+        this.ctx.lineTo(pCenter.x, pCenter.y - retRadius + tick * 0.4);
+        this.ctx.moveTo(pCenter.x, pCenter.y + retRadius - tick * 0.4);
         this.ctx.lineTo(pCenter.x, pCenter.y + retRadius + tick);
         this.ctx.stroke();
 
@@ -907,59 +920,76 @@ export class SkeletonOverlay {
           this.ctx.arc(
             pCenter.x,
             pCenter.y,
-            retRadius * 1.25,
+            retRadius * 1.18,
             -Math.PI / 2,
             -Math.PI / 2 + Math.PI * 2 * holdProgress,
           );
           this.ctx.strokeStyle = '#ffb703';
-          this.ctx.lineWidth = Math.max(2.5, baseLineWidth * 2.0);
+          this.ctx.lineWidth = Math.max(1.8, baseRetLineWidth * 1.8);
           this.ctx.stroke();
         }
         this.ctx.restore();
       } else {
-        // Subtle inactive dotted/faint boundary
+        // Inactive: subtle HUD corner brackets leaving the figure silhouette 100% clean
         this.ctx.save();
-        this.ctx.globalAlpha = alpha * 0.35;
-        this.ctx.setLineDash([3, 4]);
+        this.ctx.globalAlpha = alpha * 0.30;
+        this.ctx.lineWidth = Math.max(0.6, baseRetLineWidth * 0.9);
+        const bHalf = retRadius * 0.90;
+        const bLen = retRadius * 0.25;
+
         this.ctx.beginPath();
-        this.ctx.arc(pCenter.x, pCenter.y, retRadius, 0, Math.PI * 2);
+        // Top-Left bracket
+        this.ctx.moveTo(pCenter.x - bHalf, pCenter.y - bHalf + bLen);
+        this.ctx.lineTo(pCenter.x - bHalf, pCenter.y - bHalf);
+        this.ctx.lineTo(pCenter.x - bHalf + bLen, pCenter.y - bHalf);
+        // Top-Right bracket
+        this.ctx.moveTo(pCenter.x + bHalf - bLen, pCenter.y - bHalf);
+        this.ctx.lineTo(pCenter.x + bHalf, pCenter.y - bHalf);
+        this.ctx.lineTo(pCenter.x + bHalf, pCenter.y - bHalf + bLen);
+        // Bottom-Right bracket
+        this.ctx.moveTo(pCenter.x + bHalf, pCenter.y + bHalf - bLen);
+        this.ctx.lineTo(pCenter.x + bHalf, pCenter.y + bHalf);
+        this.ctx.lineTo(pCenter.x + bHalf - bLen, pCenter.y + bHalf);
+        // Bottom-Left bracket
+        this.ctx.moveTo(pCenter.x - bHalf + bLen, pCenter.y + bHalf);
+        this.ctx.lineTo(pCenter.x - bHalf, pCenter.y + bHalf);
+        this.ctx.lineTo(pCenter.x - bHalf, pCenter.y + bHalf - bLen);
         this.ctx.stroke();
         this.ctx.restore();
       }
 
-      // --- 2. Draw Stick Figure Joints & Single Lines ---
-      // Head
-      const pHead = p(0, -0.62 * s);
-      const pHeadTop = p(0, -0.80 * s);
-      const headR = Math.max(2.5, Math.hypot(pHeadTop.x - pHead.x, pHeadTop.y - pHead.y));
+      // --- 2. Anatomical Anchors (70% upper body allocation for gesture clarity) ---
+      // Head: solid filled phosphor circle for maximum contrast on low-resolution scanlines
+      const pHead = p(0, -0.68 * s);
+      const pHeadTop = p(0, -0.82 * s);
+      const headR = Math.max(2.2, Math.hypot(pHeadTop.x - pHead.x, pHeadTop.y - pHead.y));
 
       this.ctx.beginPath();
       this.ctx.arc(pHead.x, pHead.y, headR, 0, Math.PI * 2);
-      this.ctx.stroke();
+      this.ctx.fill();
 
-      // Spine (Neck to Pelvis)
-      const pNeck = p(0, -0.32 * s);
-      const pPelvis = p(0, +0.20 * s);
+      // Torso & Shoulders
+      const pNeck = p(0, -0.48 * s);
+      const pPelvis = p(0, +0.08 * s);
+      const pLShoulder = p(-0.26 * s, -0.46 * s);
+      const pRShoulder = p(+0.26 * s, -0.46 * s);
+
+      // Spine and Shoulder crossbar
+      this.ctx.lineWidth = figLineWidth;
       this.ctx.beginPath();
       this.ctx.moveTo(pNeck.x, pNeck.y);
       this.ctx.lineTo(pPelvis.x, pPelvis.y);
-      this.ctx.stroke();
-
-      // Shoulder Bar
-      const pLShoulder = p(-0.30 * s, -0.30 * s);
-      const pRShoulder = p(+0.30 * s, -0.30 * s);
-      this.ctx.beginPath();
       this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
       this.ctx.lineTo(pRShoulder.x, pRShoulder.y);
       this.ctx.stroke();
 
-      // Legs
-      const pLHip = p(-0.16 * s, +0.20 * s);
-      const pRHip = p(+0.16 * s, +0.20 * s);
-      const pLKnee = p(-0.24 * s, +0.55 * s);
-      const pRKnee = p(+0.24 * s, +0.55 * s);
-      const pLFoot = p(-0.32 * s, +0.92 * s);
-      const pRFoot = p(+0.32 * s, +0.92 * s);
+      // Compact, grounded legs (leaves maximum vertical room for upper-body gestures)
+      const pLHip = p(-0.14 * s, +0.08 * s);
+      const pRHip = p(+0.14 * s, +0.08 * s);
+      const pLKnee = p(-0.20 * s, +0.38 * s);
+      const pRKnee = p(+0.20 * s, +0.38 * s);
+      const pLFoot = p(-0.28 * s, +0.70 * s);
+      const pRFoot = p(+0.28 * s, +0.70 * s);
 
       this.ctx.beginPath();
       this.ctx.moveTo(pLHip.x, pLHip.y);
@@ -970,105 +1000,238 @@ export class SkeletonOverlay {
       this.ctx.lineTo(pRFoot.x, pRFoot.y);
       this.ctx.stroke();
 
-      // Arms for each of the 6 signature poses
+      // Hand terminal dot helper
+      const handDotR = Math.max(1.2, baseFigLineWidth * 1.2);
+      const drawHandTerminal = (pt: { x: number; y: number }) => {
+        this.ctx.beginPath();
+        this.ctx.arc(pt.x, pt.y, handDotR, 0, Math.PI * 2);
+        this.ctx.fill();
+      };
+
+      // --- 3. Distinct Signature Gestures for the 6 TVs ---
       this.ctx.beginPath();
       switch (pose) {
         case 'POSE_ANTENNA': {
-          // CRT 01: Both arms high in wide V-dipole
-          const pLElbow = p(-0.55 * s, -0.65 * s);
-          const pLWrist = p(-0.80 * s, -1.05 * s);
-          const pRElbow = p(+0.55 * s, -0.65 * s);
-          const pRWrist = p(+0.80 * s, -1.05 * s);
+          // CRT 01: RABBIT EARS (VHF Dipole)
+          // Both arms high in a wide V, with elevated elbows and antenna wave tips
+          const pLElbow = p(-0.48 * s, -0.74 * s);
+          const pLWrist = p(-0.76 * s, -1.14 * s);
+          const pRElbow = p(+0.48 * s, -0.74 * s);
+          const pRWrist = p(+0.76 * s, -1.14 * s);
+
           this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
           this.ctx.lineTo(pLElbow.x, pLElbow.y);
           this.ctx.lineTo(pLWrist.x, pLWrist.y);
+
           this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
           this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          this.ctx.stroke();
+
+          // Hand terminals
+          drawHandTerminal(pLWrist);
+          drawHandTerminal(pRWrist);
+
+          // Stylized radiating antenna wave ticks above each hand
+          this.ctx.save();
+          this.ctx.lineWidth = Math.max(0.8, baseFigLineWidth * 0.85);
+          this.ctx.beginPath();
+          // Left antenna wave
+          const pLW1 = p(-0.88 * s, -1.24 * s);
+          const pLW2 = p(-0.66 * s, -1.24 * s);
+          this.ctx.moveTo(pLW1.x, pLW1.y);
+          this.ctx.lineTo(pLW2.x, pLW2.y);
+          // Right antenna wave
+          const pRW1 = p(+0.66 * s, -1.24 * s);
+          const pRW2 = p(+0.88 * s, -1.24 * s);
+          this.ctx.moveTo(pRW1.x, pRW1.y);
+          this.ctx.lineTo(pRW2.x, pRW2.y);
+          this.ctx.stroke();
+          this.ctx.restore();
           break;
         }
+
         case 'POSE_DIAL_TUNER': {
-          // CRT 02: Left arm low, right arm pointing 45° up
-          const pLElbow = p(-0.40 * s, -0.05 * s);
-          const pLWrist = p(-0.25 * s, +0.22 * s);
-          const pRElbow = p(+0.60 * s, -0.65 * s);
-          const pRWrist = p(+0.95 * s, -1.05 * s);
-          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
-          this.ctx.lineTo(pLElbow.x, pLElbow.y);
-          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          // CRT 02: DIAL TUNER (Yagi Point)
+          // Unmistakably asymmetric: right arm points diagonally up at 45°, left arm bent low at hip
+          const pRElbow = p(+0.54 * s, -0.76 * s);
+          const pRWrist = p(+0.88 * s, -1.16 * s);
+          const pLElbow = p(-0.42 * s, -0.30 * s);
+          const pLWrist = p(-0.22 * s, -0.04 * s);
+
+          // Pointing high arm (Right)
           this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
           this.ctx.lineTo(pRWrist.x, pRWrist.y);
+
+          // Relaxed tuner arm at waist (Left)
+          this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
+          this.ctx.lineTo(pLElbow.x, pLElbow.y);
+          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.stroke();
+
+          drawHandTerminal(pRWrist);
+          drawHandTerminal(pLWrist);
+
+          // Yagi directional pointer cross-tick at right wrist
+          this.ctx.save();
+          this.ctx.lineWidth = Math.max(0.8, baseFigLineWidth * 0.85);
+          const pTickA = p(+0.96 * s, -1.10 * s);
+          const pTickB = p(+0.80 * s, -1.22 * s);
+          this.ctx.beginPath();
+          this.ctx.moveTo(pTickA.x, pTickA.y);
+          this.ctx.lineTo(pTickB.x, pTickB.y);
+          this.ctx.stroke();
+          this.ctx.restore();
           break;
         }
+
         case 'POSE_SURPRISE': {
-          // CRT 03: Hands clutching cheeks/face, elbows down
-          const pLElbow = p(-0.38 * s, -0.28 * s);
-          const pLWrist = p(-0.16 * s, -0.58 * s);
-          const pRElbow = p(+0.38 * s, -0.28 * s);
-          const pRWrist = p(+0.16 * s, -0.58 * s);
+          // CRT 03: TV SHOCK (Commercial Gasp)
+          // Elbows flared wide (< o >), hands cupping cheeks with distinct negative clearance
+          const pLElbow = p(-0.52 * s, -0.32 * s);
+          const pLWrist = p(-0.25 * s, -0.68 * s);
+          const pRElbow = p(+0.52 * s, -0.32 * s);
+          const pRWrist = p(+0.25 * s, -0.68 * s);
+
           this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
           this.ctx.lineTo(pLElbow.x, pLElbow.y);
           this.ctx.lineTo(pLWrist.x, pLWrist.y);
+
           this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
           this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          this.ctx.stroke();
+
+          // Hand pads cupping cheeks
+          drawHandTerminal(pLWrist);
+          drawHandTerminal(pRWrist);
+
+          // Radiating shock exclamation ticks on each side of head
+          this.ctx.save();
+          this.ctx.lineWidth = Math.max(0.8, baseFigLineWidth * 0.85);
+          const pS1 = p(-0.40 * s, -0.78 * s);
+          const pS2 = p(-0.50 * s, -0.84 * s);
+          const pS3 = p(+0.40 * s, -0.78 * s);
+          const pS4 = p(+0.50 * s, -0.84 * s);
+          this.ctx.beginPath();
+          this.ctx.moveTo(pS1.x, pS1.y);
+          this.ctx.lineTo(pS2.x, pS2.y);
+          this.ctx.moveTo(pS3.x, pS3.y);
+          this.ctx.lineTo(pS4.x, pS4.y);
+          this.ctx.stroke();
+          this.ctx.restore();
           break;
         }
+
         case 'POSE_WINGSUIT': {
-          // CRT 04: Arms wide horizontal T-pose
-          const pLElbow = p(-0.60 * s, -0.30 * s);
-          const pLWrist = p(-1.05 * s, -0.30 * s);
-          const pRElbow = p(+0.60 * s, -0.30 * s);
-          const pRWrist = p(+1.05 * s, -0.30 * s);
+          // CRT 04: WINGSUIT (Horizontal Dipole / T-Pose)
+          // Wide horizontal reach, completely level arms, maximum lateral silhouette contrast
+          const pLElbow = p(-0.54 * s, -0.46 * s);
+          const pLWrist = p(-1.02 * s, -0.46 * s);
+          const pRElbow = p(+0.54 * s, -0.46 * s);
+          const pRWrist = p(+1.02 * s, -0.46 * s);
+
           this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
           this.ctx.lineTo(pLElbow.x, pLElbow.y);
           this.ctx.lineTo(pLWrist.x, pLWrist.y);
+
           this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
           this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          this.ctx.stroke();
+
+          drawHandTerminal(pLWrist);
+          drawHandTerminal(pRWrist);
+
+          // Small vertical hand/palm bars at tips
+          this.ctx.save();
+          this.ctx.lineWidth = Math.max(0.8, baseFigLineWidth * 0.9);
+          const pLHandT = p(-1.02 * s, -0.55 * s);
+          const pLHandB = p(-1.02 * s, -0.37 * s);
+          const pRHandT = p(+1.02 * s, -0.55 * s);
+          const pRHandB = p(+1.02 * s, -0.37 * s);
+          this.ctx.beginPath();
+          this.ctx.moveTo(pLHandT.x, pLHandT.y);
+          this.ctx.lineTo(pLHandB.x, pLHandB.y);
+          this.ctx.moveTo(pRHandT.x, pRHandT.y);
+          this.ctx.lineTo(pRHandB.x, pRHandB.y);
+          this.ctx.stroke();
+          this.ctx.restore();
           break;
         }
+
         case 'POSE_LOOP_HALO': {
-          // CRT 05: Arms curved overhead forming circular loop
-          const pLElbow = p(-0.58 * s, -0.68 * s);
-          const pLWrist = p(-0.04 * s, -0.98 * s);
-          const pRElbow = p(+0.58 * s, -0.68 * s);
-          const pRWrist = p(+0.04 * s, -0.98 * s);
+          // CRT 05: UHF LOOP (Circular Halo)
+          // Graceful circular loop overhead with clear clearance above head
+          const pLElbow = p(-0.52 * s, -0.72 * s);
+          const pRElbow = p(+0.52 * s, -0.72 * s);
+          const pLWrist = p(-0.12 * s, -1.06 * s);
+          const pRWrist = p(+0.12 * s, -1.06 * s);
+          const pTop = p(0, -1.14 * s);
+
           this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
           this.ctx.lineTo(pLElbow.x, pLElbow.y);
           this.ctx.lineTo(pLWrist.x, pLWrist.y);
-          this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.lineTo(pTop.x, pTop.y);
+          this.ctx.lineTo(pRWrist.x, pRWrist.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
-          this.ctx.lineTo(pRWrist.x, pRWrist.y);
-          // Overhead connecting bridge / loop
-          this.ctx.moveTo(pLWrist.x, pLWrist.y);
-          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          this.ctx.lineTo(pRShoulder.x, pRShoulder.y);
+          this.ctx.stroke();
+
+          // Central loop clasp dot
+          drawHandTerminal(pTop);
           break;
         }
+
         case 'POSE_SIGNAL_LOCK': {
-          // CRT 06: Hands clasped flat over center chest/sternum
-          const pLElbow = p(-0.42 * s, -0.06 * s);
-          const pLWrist = p(0, -0.04 * s);
-          const pRElbow = p(+0.42 * s, -0.06 * s);
-          const pRWrist = p(0, -0.04 * s);
+          // CRT 06: SIGNAL LOCK (Human Capacitor)
+          // Elbows bent wide at mid-torso, forearms meeting horizontally over sternum
+          const pLElbow = p(-0.46 * s, -0.30 * s);
+          const pRElbow = p(+0.46 * s, -0.30 * s);
+          const pChestCenter = p(0, -0.30 * s);
+
           this.ctx.moveTo(pLShoulder.x, pLShoulder.y);
           this.ctx.lineTo(pLElbow.x, pLElbow.y);
-          this.ctx.lineTo(pLWrist.x, pLWrist.y);
+          this.ctx.lineTo(pChestCenter.x, pChestCenter.y);
+
           this.ctx.moveTo(pRShoulder.x, pRShoulder.y);
           this.ctx.lineTo(pRElbow.x, pRElbow.y);
-          this.ctx.lineTo(pRWrist.x, pRWrist.y);
+          this.ctx.lineTo(pChestCenter.x, pChestCenter.y);
+          this.ctx.stroke();
+
+          // Capacitor / Lock emblem at center sternum
+          const pCapTop = p(0, -0.38 * s);
+          const pCapBot = p(0, -0.22 * s);
+          const pCapLeft = p(-0.09 * s, -0.30 * s);
+          const pCapRight = p(+0.09 * s, -0.30 * s);
+
+          this.ctx.save();
+          this.ctx.beginPath();
+          this.ctx.moveTo(pCapTop.x, pCapTop.y);
+          this.ctx.lineTo(pCapRight.x, pCapRight.y);
+          this.ctx.lineTo(pCapBot.x, pCapBot.y);
+          this.ctx.lineTo(pCapLeft.x, pCapLeft.y);
+          this.ctx.closePath();
+          if (isScreenActive) {
+            this.ctx.fillStyle = '#3ddc97';
+            this.ctx.fill();
+          } else {
+            this.ctx.strokeStyle = strokeColor;
+            this.ctx.lineWidth = Math.max(0.9, baseFigLineWidth);
+            this.ctx.stroke();
+          }
+          this.ctx.restore();
           break;
         }
       }
-      this.ctx.stroke();
 
-      // --- 3. Draw Monospace Pose Badge underneath ---
+      // --- 4. Monospace Pose Badge underneath feet ---
       const edgeDx = quad.tr.x - quad.tl.x;
       const edgeDy = quad.tr.y - quad.tl.y;
       const textAngle = Math.atan2(edgeDy, edgeDx);
 
-      const pLabel = p(0, 1.18 * s);
+      const pLabel = p(0, 1.04 * s);
       const fontSize = Math.max(8, Math.round(9 * (w / 1080) * guideScale));
       const badgeText = `[0${i + 1}] ${poseMeta.title}`;
 

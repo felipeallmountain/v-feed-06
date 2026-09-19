@@ -146,7 +146,12 @@ export interface FrameState {
   showPoseGuides: boolean;
   poseGuideOpacity: number;
   poseGuideScale: number;
+  poseGuideFigureThickness?: number;
+  poseGuideReticleThickness?: number;
+  poseGuideThickness?: number;
   poseGuidePosition: 'bottom-right' | 'top-right' | 'center';
+  poseGuideOffsetX?: number;
+  poseGuideOffsetY?: number;
   highlightActivePose: boolean;
   rotation: number; // Global frame rotation in degrees (-180 to +180)
   offsetX: number; // Global frame X offset (-0.5 to +0.5)
@@ -483,7 +488,12 @@ export const useAppStore = createStore<AppState>((set) => ({
     showPoseGuides: true,
     poseGuideOpacity: 0.70,
     poseGuideScale: 0.60,
+    poseGuideFigureThickness: 1.2,
+    poseGuideReticleThickness: 1.2,
+    poseGuideThickness: 1.2,
     poseGuidePosition: 'bottom-right',
+    poseGuideOffsetX: 0.0,
+    poseGuideOffsetY: 0.0,
     highlightActivePose: true,
     rotation: 0,
     offsetX: 0,

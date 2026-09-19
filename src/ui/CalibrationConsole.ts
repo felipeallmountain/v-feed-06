@@ -478,7 +478,13 @@ export class CalibrationConsole {
 
     // --- 3. SCREEN FRAMES & OUTLINES ---
     const framesFolder = gui.addFolder('Screen Frames & TV Outlines');
-    const frm = { ...store.frames };
+    const frm = {
+      ...store.frames,
+      poseGuideFigureThickness: store.frames.poseGuideFigureThickness ?? store.frames.poseGuideThickness ?? 1.2,
+      poseGuideReticleThickness: store.frames.poseGuideReticleThickness ?? store.frames.poseGuideThickness ?? 1.2,
+      poseGuideOffsetX: store.frames.poseGuideOffsetX ?? 0.0,
+      poseGuideOffsetY: store.frames.poseGuideOffsetY ?? 0.0,
+    };
 
     framesFolder
       .add(frm, 'show')
@@ -542,7 +548,7 @@ export class CalibrationConsole {
 
     framesFolder
       .add(frm, 'thickness', 0.5, 8.0, 0.5)
-      .name('Line Thickness')
+      .name('Frame Line Thickness')
       .onChange((v: number) => {
         store.setFrames({ thickness: v });
         this.broadcastPatch({ frames: { thickness: v } });
@@ -611,70 +617,6 @@ export class CalibrationConsole {
         'resetTitles',
       )
       .name('Reset Default Titles');
-
-    // Screen Pose Guides (CRT 01 - 06)
-    const poseGuideFolder = framesFolder.addFolder('Screen Pose Guides (6 TVs)');
-    poseGuideFolder.open();
-
-    poseGuideFolder
-      .add(frm, 'showPoseGuides')
-      .name('Show Pose Guides')
-      .onChange((v: boolean) => {
-        store.setFrames({ showPoseGuides: v });
-        this.broadcastPatch({ frames: { showPoseGuides: v } });
-        this.persist();
-      });
-
-    poseGuideFolder
-      .add(frm, 'poseGuideOpacity', 0.1, 1.0, 0.05)
-      .name('Guide Opacity')
-      .onChange((v: number) => {
-        store.setFrames({ poseGuideOpacity: v });
-        this.broadcastPatch({ frames: { poseGuideOpacity: v } });
-        this.persist();
-      });
-
-    poseGuideFolder
-      .add(frm, 'poseGuideScale', 0.25, 1.5, 0.05)
-      .name('Guide Scale')
-      .onChange((v: number) => {
-        store.setFrames({ poseGuideScale: v });
-        this.broadcastPatch({ frames: { poseGuideScale: v } });
-        this.persist();
-      });
-
-    poseGuideFolder
-      .add(frm, 'poseGuidePosition', ['bottom-right', 'top-right', 'center'])
-      .name('Guide Position')
-      .onChange((v: 'bottom-right' | 'top-right' | 'center') => {
-        store.setFrames({ poseGuidePosition: v });
-        this.broadcastPatch({ frames: { poseGuidePosition: v } });
-        this.persist();
-      });
-
-    poseGuideFolder
-      .add(frm, 'highlightActivePose')
-      .name('Highlight Active Pose')
-      .onChange((v: boolean) => {
-        store.setFrames({ highlightActivePose: v });
-        this.broadcastPatch({ frames: { highlightActivePose: v } });
-        this.persist();
-      });
-
-    // Pose Assignment Roster
-    const poseRoster = poseGuideFolder.addFolder('Pose Assignment Roster');
-    poseRoster.close();
-    const rosterList = [
-      { screen: 'CRT [01] (Top-Left)', pose: 'RABBIT EARS (VHF Dipole)' },
-      { screen: 'CRT [02] (Top-Right)', pose: 'DIAL TUNER (Yagi Point)' },
-      { screen: 'CRT [03] (Mid-Left)', pose: 'TV SHOCK (Commercial Gasp)' },
-      { screen: 'CRT [04] (Mid-Right)', pose: 'WINGSUIT (Horizontal Dipole)' },
-      { screen: 'CRT [05] (Bot-Left)', pose: 'UHF LOOP (Circular Halo)' },
-      { screen: 'CRT [06] (Bot-Right)', pose: 'SIGNAL LOCK (Human Capacitor)' },
-    ];
-    for (const item of rosterList) {
-      poseRoster.add({ info: item.pose }, 'info').name(item.screen).disable();
-    }
 
     // Bottom Query Message (CRT 01 - 06)
     this.queryState = {
@@ -790,7 +732,107 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    // --- 4. CORNER PINNING, OFFSET & KEYSTONE (6 SCREENS) ---
+    // --- 4. POSE FIGURES & GUIDES (6 TVs) ---
+    const poseGuideFolder = gui.addFolder('Pose Figures & Guides (6 TVs)');
+    poseGuideFolder.open();
+
+    poseGuideFolder
+      .add(frm, 'showPoseGuides')
+      .name('Show Pose Guides')
+      .onChange((v: boolean) => {
+        store.setFrames({ showPoseGuides: v });
+        this.broadcastPatch({ frames: { showPoseGuides: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideScale', 0.20, 2.50, 0.05)
+      .name('Image Size (Scale)')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideScale: v });
+        this.broadcastPatch({ frames: { poseGuideScale: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideFigureThickness', 0.2, 4.0, 0.1)
+      .name('Figure Line Thickness')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideFigureThickness: v, poseGuideThickness: v });
+        this.broadcastPatch({ frames: { poseGuideFigureThickness: v, poseGuideThickness: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideReticleThickness', 0.2, 4.0, 0.1)
+      .name('Reticle Line Thickness')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideReticleThickness: v });
+        this.broadcastPatch({ frames: { poseGuideReticleThickness: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideOpacity', 0.1, 1.0, 0.05)
+      .name('Guide Opacity')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideOpacity: v });
+        this.broadcastPatch({ frames: { poseGuideOpacity: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuidePosition', ['bottom-right', 'top-right', 'center'])
+      .name('Guide Position')
+      .onChange((v: 'bottom-right' | 'top-right' | 'center') => {
+        store.setFrames({ poseGuidePosition: v });
+        this.broadcastPatch({ frames: { poseGuidePosition: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideOffsetX', -0.40, 0.40, 0.01)
+      .name('Fine Offset X')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideOffsetX: v });
+        this.broadcastPatch({ frames: { poseGuideOffsetX: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'poseGuideOffsetY', -0.40, 0.40, 0.01)
+      .name('Fine Offset Y')
+      .onChange((v: number) => {
+        store.setFrames({ poseGuideOffsetY: v });
+        this.broadcastPatch({ frames: { poseGuideOffsetY: v } });
+        this.persist();
+      });
+
+    poseGuideFolder
+      .add(frm, 'highlightActivePose')
+      .name('Highlight Active Pose')
+      .onChange((v: boolean) => {
+        store.setFrames({ highlightActivePose: v });
+        this.broadcastPatch({ frames: { highlightActivePose: v } });
+        this.persist();
+      });
+
+    // Pose Assignment Roster
+    const poseRoster = poseGuideFolder.addFolder('Pose Assignment Roster');
+    poseRoster.close();
+    const rosterList = [
+      { screen: 'CRT [01] (Top-Left)', pose: 'RABBIT EARS (VHF Dipole)' },
+      { screen: 'CRT [02] (Top-Right)', pose: 'DIAL TUNER (Yagi Point)' },
+      { screen: 'CRT [03] (Mid-Left)', pose: 'TV SHOCK (Commercial Gasp)' },
+      { screen: 'CRT [04] (Mid-Right)', pose: 'WINGSUIT (Horizontal Dipole)' },
+      { screen: 'CRT [05] (Bot-Left)', pose: 'UHF LOOP (Circular Halo)' },
+      { screen: 'CRT [06] (Bot-Right)', pose: 'SIGNAL LOCK (Human Capacitor)' },
+    ];
+    for (const item of rosterList) {
+      poseRoster.add({ info: item.pose }, 'info').name(item.screen).disable();
+    }
+
+    // --- 5. CORNER PINNING, OFFSET & KEYSTONE (6 SCREENS) ---
     const cornerFolder = gui.addFolder('Corner Pinning, Offset & Keystone (6 Screens)');
     const screenMap = {
       'CRT [01] · Top-Left': 0,
