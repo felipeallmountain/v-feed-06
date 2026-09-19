@@ -99,7 +99,7 @@ export type OutgoingSyncMessage =
   | { type: 'REQUEST_INITIAL_STATE' }
   | { type: 'SEND_INITIAL_STATE'; payload: any }
   | { type: 'HEARTBEAT'; role: 'main' | 'operator' }
-  | { type: 'DEBUG_FRAME'; bitmap: ImageBitmap };
+  | { type: 'DEBUG_FRAME'; bitmap?: ImageBitmap; dataUrl?: string };
 
 export type SyncMessage = OutgoingSyncMessage & { sourceId: string; timestamp: number };
 
@@ -110,7 +110,7 @@ export class SyncChannel {
   private channel: BroadcastChannel | null = null;
   private sourceId = `w_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
   private listeners: Array<(msg: SyncMessage) => void> = [];
-  private debugFrameListeners: Array<(bitmap: ImageBitmap) => void> = [];
+  private debugFrameListeners: Array<(frame: ImageBitmap | string) => void> = [];
   private storageHandler: ((e: StorageEvent) => void) | null = null;
   private heartbeatInterval = 0;
   private lastPeerSeen = 0;
@@ -152,11 +152,12 @@ export class SyncChannel {
 
     this.lastPeerSeen = Date.now();
 
-    // High-performance image bitmap frame delivery
-    if (msg.type === 'DEBUG_FRAME' && msg.bitmap) {
+    // High-performance image bitmap / dataUrl frame delivery
+    if (msg.type === 'DEBUG_FRAME' && (msg.bitmap || msg.dataUrl)) {
+      const framePayload = msg.bitmap || msg.dataUrl;
       for (const listener of this.debugFrameListeners) {
         try {
-          listener(msg.bitmap);
+          listener(framePayload);
         } catch (err) {
           console.error('[SyncChannel] Debug frame listener error:', err);
         }
@@ -173,30 +174,33 @@ export class SyncChannel {
     }
   }
 
-  onDebugFrame(callback: (bitmap: ImageBitmap) => void): () => void {
+  onDebugFrame(callback: (frame: ImageBitmap | string) => void): () => void {
     this.debugFrameListeners.push(callback);
     return () => {
       this.debugFrameListeners = this.debugFrameListeners.filter((cb) => cb !== callback);
     };
   }
 
-  sendDebugFrame(bitmap: ImageBitmap): void {
+  sendDebugFrame(frame: ImageBitmap | string): void {
     if (!this.channel) return;
     try {
       this.channel.postMessage({
         type: 'DEBUG_FRAME',
-        bitmap,
+        bitmap: typeof frame !== 'string' ? frame : undefined,
+        dataUrl: typeof frame === 'string' ? frame : undefined,
         sourceId: this.sourceId,
         timestamp: Date.now(),
       });
     } catch (err) {
       console.warn('[SyncChannel] sendDebugFrame error:', err);
+      throw err;
     }
   }
 
   send(msg: OutgoingSyncMessage): void {
     if (msg.type === 'DEBUG_FRAME') {
-      this.sendDebugFrame(msg.bitmap);
+      const payload = msg.bitmap || msg.dataUrl;
+      if (payload) this.sendDebugFrame(payload);
       return;
     }
 

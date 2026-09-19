@@ -23,6 +23,7 @@ interface SavedCalibration {
   tracking: {
     confidenceThreshold: number;
     mirrorCamera: boolean;
+    cameraRotation?: number;
     distanceScale?: number;
     distanceOffset?: number;
     minDistance?: number;
@@ -1154,6 +1155,30 @@ export class CalibrationConsole {
         this.broadcastPatch({ tracking: { mirrorCamera: v } });
         this.persist();
       });
+    tracking
+      .add(store.tracking, 'cameraRotation', {
+        '0° (Standard Landscape)': 0,
+        '90° (Vertical Clockwise)': 90,
+        '180° (Inverted Landscape)': 180,
+        '270° (Vertical Counter-Clockwise)': 270,
+      })
+      .name('Camera Rotation')
+      .onChange((v: any) => {
+        const rot = Number(v);
+        store.patchTracking({ cameraRotation: rot });
+        this.broadcastPatch({ tracking: { cameraRotation: rot } });
+
+        // Auto-switch debug overlay to camera feed so user immediately sees rotated camera
+        store.setDebugViewMode('camera');
+        this.updateDebugWindowFeedMode('camera');
+        this.broadcastPatch({ debugViewMode: 'camera' });
+        if (this.debugModeGuiCtrl) {
+          this.dbgState.debugViewMode = 'camera';
+          this.debugModeGuiCtrl.updateDisplay();
+        }
+
+        this.persist();
+      });
 
     const distReadout = { liveDistance: `${store.tracking.distance.toFixed(2)} m` };
     this.distController = tracking
@@ -1892,12 +1917,28 @@ export class CalibrationConsole {
     this.updateDebugWindowFeedMode(initialMode);
   }
 
-  private handleDebugFrame(bitmap: ImageBitmap): void {
+  private debugFallbackImg: HTMLImageElement | null = null;
+
+  private handleDebugFrame(frame: ImageBitmap | string): void {
     this.lastDebugFrameReceivedTs = Date.now();
     if (this.debugCanvasEl && this.debugCtx) {
-      this.debugCtx.drawImage(bitmap, 0, 0, this.debugCanvasEl.width, this.debugCanvasEl.height);
+      if (typeof frame === 'string') {
+        if (!this.debugFallbackImg) {
+          this.debugFallbackImg = new Image();
+        }
+        this.debugFallbackImg.onload = () => {
+          if (this.debugCanvasEl && this.debugCtx && this.debugFallbackImg) {
+            this.debugCtx.drawImage(this.debugFallbackImg, 0, 0, this.debugCanvasEl.width, this.debugCanvasEl.height);
+          }
+        };
+        this.debugFallbackImg.src = frame;
+      } else {
+        this.debugCtx.drawImage(frame, 0, 0, this.debugCanvasEl.width, this.debugCanvasEl.height);
+        try {
+          frame.close();
+        } catch {}
+      }
     }
-    bitmap.close();
     if (this.debugOfflineMsg && this.debugOfflineMsg.style.display !== 'none') {
       this.debugOfflineMsg.style.display = 'none';
     }
@@ -2288,6 +2329,7 @@ export class CalibrationConsole {
       tracking: {
         confidenceThreshold: state.tracking.confidenceThreshold,
         mirrorCamera: state.tracking.mirrorCamera,
+        cameraRotation: state.tracking.cameraRotation ?? 0,
         distanceScale: state.tracking.distanceScale,
         distanceOffset: state.tracking.distanceOffset,
         minDistance: state.tracking.minDistance,

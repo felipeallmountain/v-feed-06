@@ -16,6 +16,7 @@ export interface SavedCalibration {
   tracking: {
     confidenceThreshold: number;
     mirrorCamera: boolean;
+    cameraRotation?: number;
     distanceScale?: number;
     distanceOffset?: number;
     minDistance?: number;
@@ -164,6 +165,7 @@ export class CalibrationManager {
       tracking: {
         confidenceThreshold: state.tracking.confidenceThreshold,
         mirrorCamera: state.tracking.mirrorCamera,
+        cameraRotation: state.tracking.cameraRotation ?? 0,
         distanceScale: state.tracking.distanceScale,
         distanceOffset: state.tracking.distanceOffset,
         minDistance: state.tracking.minDistance,

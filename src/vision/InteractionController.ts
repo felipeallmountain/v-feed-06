@@ -27,7 +27,10 @@ export class InteractionController {
    * Main per-frame interaction tick.
    * Evaluates feature extraction, priority ladder, hold debounce, cooldown, and shader modulation.
    */
-  update(frame: TrackerFrame, video: HTMLVideoElement | null): InteractionFeatureState {
+  update(
+    frame: TrackerFrame,
+    video: HTMLVideoElement | HTMLCanvasElement | null,
+  ): InteractionFeatureState {
     const now = frame.timestampMs;
     const dt = this.lastUpdateTs > 0 ? Math.max(1, now - this.lastUpdateTs) : 16;
     this.lastUpdateTs = now;

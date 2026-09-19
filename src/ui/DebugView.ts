@@ -24,7 +24,7 @@ export class DebugView {
 
   draw(
     frame: TrackerFrame | null,
-    webcam: HTMLVideoElement,
+    webcam: HTMLVideoElement | HTMLCanvasElement | null,
     feedVideo?: HTMLVideoElement | null,
   ): void {
     const state = useAppStore.getState();
@@ -86,35 +86,72 @@ export class DebugView {
     w: number,
     h: number,
     frame: TrackerFrame | null,
-    webcam: HTMLVideoElement,
+    webcam: HTMLVideoElement | HTMLCanvasElement | null,
     mirror: boolean,
   ): void {
-    if (webcam.readyState >= 2) {
-      this.ctx.save();
-      if (mirror) {
-        this.ctx.translate(x + w, y);
-        this.ctx.scale(-1, 1);
-        this.ctx.drawImage(webcam, 0, 0, w, h);
-      } else {
-        this.ctx.drawImage(webcam, x, y, w, h);
-      }
-      this.ctx.restore();
+    if (!webcam) return;
+    const isReady =
+      webcam instanceof HTMLVideoElement
+        ? webcam.readyState >= 2
+        : webcam.width > 0 && webcam.height > 0;
+
+    if (!isReady) return;
+
+    const camW = webcam instanceof HTMLVideoElement ? webcam.videoWidth : webcam.width;
+    const camH = webcam instanceof HTMLVideoElement ? webcam.videoHeight : webcam.height;
+    if (camW <= 0 || camH <= 0) return;
+
+    const camAspect = camW / camH;
+    const slotAspect = w / h;
+
+    let drawW = w;
+    let drawH = h;
+    let drawX = x;
+    let drawY = y;
+
+    if (camAspect < slotAspect) {
+      // Vertical / portrait camera (e.g. 90° or 270° with 9:16 aspect): letterboxed horizontally
+      drawW = h * camAspect;
+      drawX = x + (w - drawW) / 2;
+    } else {
+      // Horizontal / landscape camera (e.g. 0° or 180° with 16:9 aspect): letterboxed vertically
+      drawH = w / camAspect;
+      drawY = y + (h - drawH) / 2;
     }
 
-    // Draw 2x3 matrix antenna quadrant guides in camera view
+    // 1. Draw Camera Feed
+    this.ctx.save();
+    if (mirror) {
+      this.ctx.translate(drawX + drawW, drawY);
+      this.ctx.scale(-1, 1);
+      this.ctx.drawImage(webcam, 0, 0, drawW, drawH);
+    } else {
+      this.ctx.drawImage(webcam, drawX, drawY, drawW, drawH);
+    }
+    this.ctx.restore();
+
+    // 2. Draw 2x3 matrix antenna quadrant guides on the fitted camera feed
     if (useAppStore.getState().shaders.matrixSplit) {
-      this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.25)';
-      this.ctx.lineWidth = 1;
+      this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.45)';
+      this.ctx.lineWidth = 1.5;
       this.ctx.beginPath();
-      this.ctx.moveTo(x + w * 0.5, y);
-      this.ctx.lineTo(x + w * 0.5, y + h);
-      this.ctx.moveTo(x, y + h * (1 / 3));
-      this.ctx.lineTo(x + w, y + h * (1 / 3));
-      this.ctx.moveTo(x, y + h * (2 / 3));
-      this.ctx.lineTo(x + w, y + h * (2 / 3));
+      // Vertical 2-column split (Left vs Right CRT)
+      this.ctx.moveTo(drawX + drawW * 0.5, drawY);
+      this.ctx.lineTo(drawX + drawW * 0.5, drawY + drawH);
+      // Horizontal 3-row splits (Top, Mid, Bot CRT)
+      this.ctx.moveTo(drawX, drawY + drawH * (1 / 3));
+      this.ctx.lineTo(drawX + drawW, drawY + drawH * (1 / 3));
+      this.ctx.moveTo(drawX, drawY + drawH * (2 / 3));
+      this.ctx.lineTo(drawX + drawW, drawY + drawH * (2 / 3));
       this.ctx.stroke();
+
+      // Screen border box
+      this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.7)';
+      this.ctx.lineWidth = 1;
+      this.ctx.strokeRect(drawX, drawY, drawW, drawH);
     }
 
+    // 3. Draw Landmark Dots accurately mapped to the fitted camera feed
     const poses =
       frame?.poses && frame.poses.length > 0
         ? frame.poses
@@ -126,12 +163,24 @@ export class DebugView {
       this.ctx.fillStyle = '#3ddc97';
       for (const p of lm) {
         this.ctx.beginPath();
-        const px = mirror ? x + (1 - p.x) * w : x + p.x * w;
-        const py = y + p.y * h;
+        const px = drawX + p.x * drawW;
+        const py = drawY + p.y * drawH;
         this.ctx.arc(px, py, 2.5, 0, Math.PI * 2);
         this.ctx.fill();
       }
     }
+
+    // 4. Orientation badge
+    const rot = useAppStore.getState().tracking.cameraRotation ?? 0;
+    const isPortrait = rot === 90 || rot === 270;
+    const formatTag = isPortrait ? '9:16 VERTICAL' : 'HORIZONTAL';
+    this.ctx.font = 'bold 9px monospace';
+    this.ctx.fillStyle = isPortrait ? '#00e5ff' : '#3ddc97';
+    this.ctx.fillText(
+      `CAM: ${rot}° [${formatTag}]${mirror ? ' [M]' : ''}`,
+      drawX + 6,
+      drawY + drawH - 8,
+    );
   }
 
   private drawVideo(

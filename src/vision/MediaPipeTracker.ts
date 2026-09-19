@@ -75,7 +75,7 @@ export class MediaPipeTracker {
     }
   }
 
-  detect(video: HTMLVideoElement, mirror: boolean): TrackerFrame {
+  detect(video: HTMLVideoElement | HTMLCanvasElement, mirror: boolean): TrackerFrame {
     const empty: TrackerFrame = {
       present: false,
       personCount: 0,
@@ -88,12 +88,16 @@ export class MediaPipeTracker {
     };
 
     if (!this.ready || !this.pose || !this.hands) return empty;
-    if (video.readyState < 2) return empty;
+
+    if (video instanceof HTMLVideoElement) {
+      if (video.readyState < 2) return empty;
+      if (video.currentTime === this.lastVideoTime) return empty;
+      this.lastVideoTime = video.currentTime;
+    } else if (video instanceof HTMLCanvasElement) {
+      if (video.width === 0 || video.height === 0) return empty;
+    }
 
     const now = performance.now();
-    if (video.currentTime === this.lastVideoTime) return empty;
-    this.lastVideoTime = video.currentTime;
-
     const poseResult = this.pose.detectForVideo(video, now);
     const handResult = this.hands.detectForVideo(video, now);
 

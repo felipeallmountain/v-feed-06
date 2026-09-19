@@ -96,6 +96,7 @@ export interface TrackingState {
   rightHand: HandPoint;
   confidenceThreshold: number;
   mirrorCamera: boolean;
+  cameraRotation: number;
   lastSeenMs: number;
   distanceScale: number;
   distanceOffset: number;
@@ -522,6 +523,7 @@ export const useAppStore = createStore<AppState>((set) => ({
     rightHand: idleHand(),
     confidenceThreshold: 0.5,
     mirrorCamera: true,
+    cameraRotation: 0,
     lastSeenMs: 0,
     distanceScale: 8.5,
     distanceOffset: 2.8,

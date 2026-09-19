@@ -191,6 +191,9 @@ export class App {
       if (state.tracking.mirrorCamera !== prev.tracking.mirrorCamera) {
         this.camera?.setMirror(state.tracking.mirrorCamera);
       }
+      if (state.tracking.cameraRotation !== prev.tracking.cameraRotation) {
+        this.camera?.setRotation(state.tracking.cameraRotation);
+      }
       if (state.tracking.maxNumPoses !== prev.tracking.maxNumPoses) {
         void this.tracker?.setMaxNumPoses(state.tracking.maxNumPoses);
       }
@@ -206,12 +209,15 @@ export class App {
       this.debug?.markFrame(dt);
 
       let frame = null;
-      if (this.trackerReady && this.tracker && this.camera) {
+      const trackingState = useAppStore.getState().tracking;
+      const camSource = this.camera ? this.camera.updateFrame(trackingState.cameraRotation) : null;
+
+      if (this.trackerReady && this.tracker && camSource) {
         frame = this.tracker.detect(
-          this.camera.video,
-          useAppStore.getState().tracking.mirrorCamera,
+          camSource,
+          trackingState.mirrorCamera,
         );
-        this.interaction.update(frame, this.camera.video);
+        this.interaction.update(frame, camSource);
         this.mapper.update(frame);
       } else {
         const sh = useAppStore.getState().shaders;
@@ -240,14 +246,21 @@ export class App {
         if (!this.sendingDebugFrame && now - this.lastDebugFrameTs >= 33) {
           this.lastDebugFrameTs = now;
           this.sendingDebugFrame = true;
-          this.debug.draw(frame, webcam, feedVideo);
+          this.debug.draw(frame, camSource, feedVideo);
           createImageBitmap(this.debugCanvas)
             .then((bmp) => {
-              syncChannel.sendDebugFrame(bmp);
-              bmp.close();
+              try {
+                syncChannel.sendDebugFrame(bmp);
+              } catch {
+                const dataUrl = this.debugCanvas?.toDataURL('image/jpeg', 0.65);
+                if (dataUrl) syncChannel.sendDebugFrame(dataUrl);
+              }
             })
-            .catch((err) => {
-              console.warn('[v-feed] sendDebugFrame error:', err);
+            .catch(() => {
+              try {
+                const dataUrl = this.debugCanvas?.toDataURL('image/jpeg', 0.65);
+                if (dataUrl) syncChannel.sendDebugFrame(dataUrl);
+              } catch {}
             })
             .finally(() => {
               this.sendingDebugFrame = false;
@@ -303,8 +316,10 @@ export class App {
     }
 
     // Call getUserMedia immediately inside the button click handler.
+    const trackingState = useAppStore.getState().tracking;
     const camResult = await this.camera.start(
-      useAppStore.getState().tracking.mirrorCamera,
+      trackingState.mirrorCamera,
+      trackingState.cameraRotation,
     );
 
     await this.refreshDiagnostics();

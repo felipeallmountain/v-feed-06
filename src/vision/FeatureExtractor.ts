@@ -45,7 +45,7 @@ export class FeatureExtractor {
    */
   extract(
     frame: TrackerFrame,
-    video: HTMLVideoElement | null,
+    video: HTMLVideoElement | HTMLCanvasElement | null,
     calibratedDistance: number,
   ): InteractionFeatureState {
     const now = frame.timestampMs;
@@ -322,11 +322,14 @@ export class FeatureExtractor {
    * Samples clothing chroma / dominant hue from the spectator's torso region.
    */
   private sampleClothingChroma(
-    video: HTMLVideoElement | null,
+    video: HTMLVideoElement | HTMLCanvasElement | null,
     lm: NormalizedLandmark[] | null,
     now: number,
   ): ClothingChroma {
-    if (!video || !lm || video.readyState < 2 || !this.sampleCtx || !this.sampleCanvas) {
+    if (!video || !lm || !this.sampleCtx || !this.sampleCanvas) {
+      return this.lastChroma;
+    }
+    if (video instanceof HTMLVideoElement && video.readyState < 2) {
       return this.lastChroma;
     }
 
@@ -350,8 +353,8 @@ export class FeatureExtractor {
     const minY = Math.min(lShoulder.y, rShoulder.y);
     const maxY = Math.max(lHip.y, rHip.y);
 
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
+    const vw = video instanceof HTMLVideoElement ? video.videoWidth : video.width;
+    const vh = video instanceof HTMLVideoElement ? video.videoHeight : video.height;
     if (vw <= 0 || vh <= 0) return this.lastChroma;
 
     // Crop torso bounding box in pixel coordinates (inset 15% to avoid background bleed)
