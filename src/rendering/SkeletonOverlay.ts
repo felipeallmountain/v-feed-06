@@ -202,6 +202,117 @@ export class SkeletonOverlay {
   }
 
   /**
+   * Draws a multi-stage high-voltage jagged lightning arc between two points.
+   */
+  private drawLightningArc(
+    p1: { x: number; y: number },
+    p2: { x: number; y: number },
+    zapIntensity: number,
+    width: number,
+    baseColor: string = '#00f0ff',
+  ): void {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 2) return;
+
+    const nx = -dy / dist;
+    const ny = dx / dist;
+
+    const steps = Math.max(4, Math.min(8, Math.round(dist / 35)));
+    const amp = zapIntensity * 22 * (width / 1080);
+
+    const pts: Array<{ x: number; y: number }> = [{ x: p1.x, y: p1.y }];
+    for (let k = 1; k < steps; k++) {
+      const t = k / steps;
+      const offset = (Math.random() - 0.5) * amp * Math.sin(t * Math.PI);
+      const jx = (Math.random() - 0.5) * amp * 0.35;
+      const jy = (Math.random() - 0.5) * amp * 0.35;
+      pts.push({
+        x: p1.x + dx * t + nx * offset + jx,
+        y: p1.y + dy * t + ny * offset + jy,
+      });
+    }
+    pts.push({ x: p2.x, y: p2.y });
+
+    // Pass 1: Outer Electric Plasma Glow Aura
+    this.ctx.save();
+    this.ctx.shadowBlur = 18;
+    this.ctx.shadowColor = baseColor;
+    this.ctx.strokeStyle = baseColor;
+    this.ctx.lineWidth = Math.max(2.5, 4.2 * (width / 1080) * zapIntensity);
+    this.ctx.beginPath();
+    this.ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      this.ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    this.ctx.stroke();
+
+    // Pass 2: White-Hot Core Lightning Bolt
+    this.ctx.shadowBlur = 6;
+    this.ctx.shadowColor = '#ffffff';
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = Math.max(1.2, 2.0 * (width / 1080));
+    this.ctx.stroke();
+
+    // 25% chance of secondary branching fork spark
+    if (Math.random() < 0.28 && pts.length > 3) {
+      const forkIdx = Math.floor(1 + Math.random() * (pts.length - 2));
+      const fpt = pts[forkIdx];
+      const forkAngle = Math.atan2(dy, dx) + (Math.random() > 0.5 ? 0.7 : -0.7);
+      const forkLen = (12 + Math.random() * 24) * (width / 1080) * zapIntensity;
+      this.ctx.beginPath();
+      this.ctx.moveTo(fpt.x, fpt.y);
+      this.ctx.lineTo(
+        fpt.x + Math.cos(forkAngle) * forkLen,
+        fpt.y + Math.sin(forkAngle) * forkLen,
+      );
+      this.ctx.strokeStyle = '#ffffff';
+      this.ctx.lineWidth = Math.max(0.8, 1.4 * (width / 1080));
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
+   * Emits radial plasma sparks and electric bursts around key skeleton joints during zap.
+   */
+  private drawPlasmaJointSparks(
+    pt: { x: number; y: number },
+    zapIntensity: number,
+    width: number,
+    glowColor: string = '#00f0ff',
+  ): void {
+    const sparkCount = Math.floor(4 + Math.random() * 5);
+    const maxR = zapIntensity * 26 * (width / 1080);
+
+    this.ctx.save();
+    this.ctx.shadowBlur = 10;
+    this.ctx.shadowColor = glowColor;
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = Math.max(0.8, 1.4 * (width / 1080));
+
+    this.ctx.beginPath();
+    for (let i = 0; i < sparkCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = 6 + Math.random() * maxR;
+      const sx = pt.x + Math.cos(angle) * r;
+      const sy = pt.y + Math.sin(angle) * r;
+      this.ctx.moveTo(pt.x, pt.y);
+      this.ctx.lineTo(sx, sy);
+    }
+    this.ctx.stroke();
+
+    // Hot central plasma core
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.beginPath();
+    this.ctx.arc(pt.x, pt.y, Math.max(2, 3.5 * (width / 1080)), 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.restore();
+  }
+
+  /**
    * Bilinear quad interpolation mapping local (u, v) in [0, 1]^2 to pixel space
    * across the 4 pinned corners (TL, TR, BR, BL).
    */
@@ -891,7 +1002,35 @@ export class SkeletonOverlay {
       const pRetTop = p(0, -1.45 * s);
       const retRadius = Math.hypot(pRetTop.x - pCenter.x, pRetTop.y - pCenter.y);
 
-      if (isScreenActive || isHoldingThis) {
+      const isZapThisScreen = inter.zapActive && inter.zapScreenIndex === i && (inter.zapProgress ?? 0) > 0;
+
+      if (isZapThisScreen) {
+        // High-voltage zap shockwave overcharge ring
+        const zapProg = inter.zapProgress ?? 1.0;
+        const shockRadius = retRadius * (1.12 + (1.0 - zapProg) * 0.45);
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.arc(pCenter.x, pCenter.y, shockRadius, 0, Math.PI * 2);
+        this.ctx.strokeStyle = '#00f0ff';
+        this.ctx.shadowBlur = 18;
+        this.ctx.shadowColor = '#00f0ff';
+        this.ctx.lineWidth = Math.max(2.2, baseRetLineWidth * 2.8);
+        this.ctx.stroke();
+
+        // 8 radiating electrical discharge spikes around reticle
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = Math.max(1.2, baseRetLineWidth * 1.5);
+        this.ctx.beginPath();
+        for (let sIdx = 0; sIdx < 8; sIdx++) {
+          const a = (sIdx * Math.PI) / 4 + (Math.random() - 0.5) * 0.15;
+          const r1 = shockRadius;
+          const r2 = shockRadius + (8 + Math.random() * 20) * (w / 1080);
+          this.ctx.moveTo(pCenter.x + Math.cos(a) * r1, pCenter.y + Math.sin(a) * r1);
+          this.ctx.lineTo(pCenter.x + Math.cos(a) * r2, pCenter.y + Math.sin(a) * r2);
+        }
+        this.ctx.stroke();
+        this.ctx.restore();
+      } else if (isScreenActive || isHoldingThis) {
         // Active Signal Lock Ring
         this.ctx.save();
         this.ctx.beginPath();
@@ -1233,7 +1372,13 @@ export class SkeletonOverlay {
 
       const pLabel = p(0, 1.04 * s);
       const fontSize = Math.max(8, Math.round(9 * (w / 1080) * guideScale));
-      const badgeText = `[0${i + 1}] ${poseMeta.title}`;
+      const badgeText = isZapThisScreen
+        ? (inter.zapDirection === 'random'
+            ? `⚡ [0${i + 1}] RANDOM ZAP ⚡`
+            : i % 2 === 0
+              ? `⚡ [0${i + 1}] PREV VIDEO ⚡`
+              : `⚡ [0${i + 1}] NEXT VIDEO ⚡`)
+        : `[0${i + 1}] ${poseMeta.title}`;
 
       this.ctx.save();
       this.ctx.translate(pLabel.x, pLabel.y);
@@ -1246,15 +1391,16 @@ export class SkeletonOverlay {
 
       // Badge background pill
       this.ctx.save();
-      this.ctx.shadowBlur = 0;
-      this.ctx.fillStyle = 'rgba(5, 7, 10, 0.85)';
+      this.ctx.shadowBlur = isZapThisScreen ? 12 : 0;
+      this.ctx.shadowColor = isZapThisScreen ? '#00f0ff' : 'transparent';
+      this.ctx.fillStyle = isZapThisScreen ? 'rgba(0, 40, 60, 0.92)' : 'rgba(5, 7, 10, 0.85)';
       this.ctx.fillRect(-labelW / 2 - 4, -2, labelW + 8, fontSize + 5);
-      this.ctx.strokeStyle = strokeColor;
-      this.ctx.lineWidth = 1;
+      this.ctx.strokeStyle = isZapThisScreen ? '#00f0ff' : strokeColor;
+      this.ctx.lineWidth = isZapThisScreen ? 1.5 : 1;
       this.ctx.strokeRect(-labelW / 2 - 4, -2, labelW + 8, fontSize + 5);
       this.ctx.restore();
 
-      this.ctx.fillStyle = strokeColor;
+      this.ctx.fillStyle = isZapThisScreen ? '#ffffff' : strokeColor;
       this.ctx.fillText(badgeText, 0, 0);
       this.ctx.restore();
 
@@ -1403,6 +1549,7 @@ export class SkeletonOverlay {
   }
 
   draw(frame: TrackerFrame | null): void {
+    const store = useAppStore.getState();
     const {
       skeletonOverlay,
       skeletonStyle,
@@ -1414,7 +1561,13 @@ export class SkeletonOverlay {
       skeletonShowDots,
       skeletonJitter,
       shaders,
-    } = useAppStore.getState();
+      interaction: inter,
+    } = store;
+
+    const isZapping = inter.zapActive && (inter.zapProgress ?? 0) > 0;
+    const zapIntensity = isZapping
+      ? (inter.zapProgress ?? 1.0) * (inter.zapVisualIntensity ?? 1.0)
+      : 0;
 
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -1486,32 +1639,53 @@ export class SkeletonOverlay {
       if (skeletonShowLines) {
         this.ctx.save();
         this.ctx.globalAlpha = Math.min(Math.max(skeletonLineOpacity, 0), 1);
-        this.ctx.strokeStyle = palette.stroke;
-        this.ctx.lineWidth = lineWidth;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
 
-        // Draw RGB split ghost lines if noise is high
-        if (skeletonJitter > 0.4) {
-          this.ctx.strokeStyle = palette.ghostStroke;
-          const ghostOffset = skeletonJitter * 8 * (w / 1080);
+        if (isZapping && zapIntensity > 0.04) {
+          // --- ELECTRIC ZAP MODE: Jagged Lightning Arcs along all bones ---
+          const arcColor = inter.zapDirection === 'prev' ? '#ffd166' : inter.zapDirection === 'random' ? '#3ddc97' : '#00f0ff';
           for (const [i, j] of POSE_CONNECTIONS) {
             const p1 = jitteredLms[i];
             const p2 = jitteredLms[j];
             if (p1 && p2 && (p1.visibility ?? 1) > 0.1 && (p2.visibility ?? 1) > 0.1) {
-              const g1 = { x: p1.pt.x + ghostOffset, y: p1.pt.y - ghostOffset * 0.5 };
-              const g2 = { x: p2.pt.x + ghostOffset, y: p2.pt.y - ghostOffset * 0.5 };
-              this.drawJitteredLine(g1, g2, skeletonJitter * 0.5, w);
+              this.drawLightningArc(p1.pt, p2.pt, zapIntensity, w, arcColor);
             }
           }
-          this.ctx.strokeStyle = palette.stroke;
-        }
 
-        for (const [i, j] of POSE_CONNECTIONS) {
-          const p1 = jitteredLms[i];
-          const p2 = jitteredLms[j];
-          if (p1 && p2 && (p1.visibility ?? 1) > 0.1 && (p2.visibility ?? 1) > 0.1) {
-            this.drawJitteredLine(p1.pt, p2.pt, skeletonJitter, w);
+          // Energetic hand-to-hand arc discharge across the chest/arms
+          const lw = jitteredLms[15];
+          const rw = jitteredLms[16];
+          if (lw && rw && (lw.visibility ?? 1) > 0.12 && (rw.visibility ?? 1) > 0.12) {
+            this.drawLightningArc(lw.pt, rw.pt, zapIntensity * 1.35, w, '#ffffff');
+          }
+        } else {
+          // --- STANDARD MODE ---
+          this.ctx.strokeStyle = palette.stroke;
+          this.ctx.lineWidth = lineWidth;
+
+          // Draw RGB split ghost lines if noise is high
+          if (skeletonJitter > 0.4) {
+            this.ctx.strokeStyle = palette.ghostStroke;
+            const ghostOffset = skeletonJitter * 8 * (w / 1080);
+            for (const [i, j] of POSE_CONNECTIONS) {
+              const p1 = jitteredLms[i];
+              const p2 = jitteredLms[j];
+              if (p1 && p2 && (p1.visibility ?? 1) > 0.1 && (p2.visibility ?? 1) > 0.1) {
+                const g1 = { x: p1.pt.x + ghostOffset, y: p1.pt.y - ghostOffset * 0.5 };
+                const g2 = { x: p2.pt.x + ghostOffset, y: p2.pt.y - ghostOffset * 0.5 };
+                this.drawJitteredLine(g1, g2, skeletonJitter * 0.5, w);
+              }
+            }
+            this.ctx.strokeStyle = palette.stroke;
+          }
+
+          for (const [i, j] of POSE_CONNECTIONS) {
+            const p1 = jitteredLms[i];
+            const p2 = jitteredLms[j];
+            if (p1 && p2 && (p1.visibility ?? 1) > 0.1 && (p2.visibility ?? 1) > 0.1) {
+              this.drawJitteredLine(p1.pt, p2.pt, skeletonJitter, w);
+            }
           }
         }
         this.ctx.restore();
@@ -1521,22 +1695,86 @@ export class SkeletonOverlay {
       if (skeletonShowDots) {
         this.ctx.save();
         this.ctx.globalAlpha = Math.min(Math.max(skeletonDotOpacity, 0), 1);
-        this.ctx.fillStyle = palette.joint;
-        for (const p of jitteredLms) {
-          if ((p.visibility ?? 1) > 0.3) {
-            const r = dotRadius * (1.0 + Math.random() * skeletonJitter * 0.4);
-            this.ctx.beginPath();
-            this.ctx.arc(p.pt.x, p.pt.y, r, 0, Math.PI * 2);
-            this.ctx.fill();
+        if (isZapping && zapIntensity > 0.04) {
+          // --- ELECTRIC ZAP MODE: Radial Plasma Sparks at Key Joints ---
+          const sparkColor = inter.zapDirection === 'prev' ? '#ffd166' : inter.zapDirection === 'random' ? '#00ffa3' : '#00f0ff';
+          // Key joints: head (0), shoulders (11,12), elbows (13,14), wrists (15,16), hips (23,24), knees (25,26), ankles (27,28)
+          const keyIndices = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+          for (const idx of keyIndices) {
+            const p = jitteredLms[idx];
+            if (p && (p.visibility ?? 1) > 0.22) {
+              this.drawPlasmaJointSparks(p.pt, zapIntensity, w, sparkColor);
+            }
+          }
+        } else {
+          // --- STANDARD MODE ---
+          this.ctx.fillStyle = palette.joint;
+          for (const p of jitteredLms) {
+            if ((p.visibility ?? 1) > 0.3) {
+              const r = dotRadius * (1.0 + Math.random() * skeletonJitter * 0.4);
+              this.ctx.beginPath();
+              this.ctx.arc(p.pt.x, p.pt.y, r, 0, Math.PI * 2);
+              this.ctx.fill();
 
-            if (skeletonJitter > 0.3 && Math.random() < skeletonJitter * 0.5) {
-              const sparkX = p.pt.x + (Math.random() - 0.5) * 16 * (w / 1080);
-              const sparkY = p.pt.y + (Math.random() - 0.5) * 16 * (w / 1080);
-              this.ctx.fillRect(sparkX, sparkY, lineWidth, lineWidth);
+              if (skeletonJitter > 0.3 && Math.random() < skeletonJitter * 0.5) {
+                const sparkX = p.pt.x + (Math.random() - 0.5) * 16 * (w / 1080);
+                const sparkY = p.pt.y + (Math.random() - 0.5) * 16 * (w / 1080);
+                this.ctx.fillRect(sparkX, sparkY, lineWidth, lineWidth);
+              }
             }
           }
         }
         this.ctx.restore();
+      }
+    }
+
+    // Body-to-Screen Energy Beam (Discharge pulse from spectator towards target CRT)
+    if (
+      isZapping &&
+      zapIntensity > 0.08 &&
+      inter.zapScreenIndex !== null &&
+      inter.zapScreenIndex !== undefined &&
+      inter.zapScreenIndex >= 0 &&
+      poses.length > 0
+    ) {
+      const sh = store.shaders;
+      if (sh.matrixSplit) {
+        const uvCorners = computeAllScreenCorners(
+          sh.bezelWidthX,
+          sh.bezelWidthY,
+          sh.bezelOuter,
+          sh.cornerOffsets,
+          sh.screenOffsets,
+          sh.screenFlips,
+          sh.globalRotation,
+          sh.globalFineRotation,
+          sh.globalOffsetX,
+          sh.globalOffsetY,
+        );
+        const base = inter.zapScreenIndex * 4;
+        const uvBL = uvCorners[base + 0];
+        const uvBR = uvCorners[base + 1];
+        const uvTR = uvCorners[base + 2];
+        const uvTL = uvCorners[base + 3];
+        if (uvBL && uvBR && uvTR && uvTL) {
+          const quadCenterX = (uvBL.x + uvBR.x + uvTR.x + uvTL.x) * 0.25 * w;
+          const quadCenterY = (1.0 - (uvBL.y + uvBR.y + uvTR.y + uvTL.y) * 0.25) * h;
+          const primaryLm = poses[0];
+          const nose = primaryLm[0];
+          const lWrist = primaryLm[15];
+          const rWrist = primaryLm[16];
+          const originPt = inter.zapDirection === 'prev' ? (lWrist ?? nose) : (rWrist ?? nose);
+          if (originPt) {
+            const beamColor = inter.zapDirection === 'prev' ? '#ffaa00' : inter.zapDirection === 'random' ? '#00ffa3' : '#00e5ff';
+            this.drawLightningArc(
+              { x: originPt.x * w, y: originPt.y * h },
+              { x: quadCenterX, y: quadCenterY },
+              zapIntensity * 1.5,
+              w,
+              beamColor,
+            );
+          }
+        }
       }
     }
 
@@ -1563,14 +1801,24 @@ export class SkeletonOverlay {
       if (skeletonShowLines) {
         this.ctx.save();
         this.ctx.globalAlpha = Math.min(Math.max(skeletonLineOpacity, 0), 1);
-        this.ctx.strokeStyle = palette.handStroke;
-        this.ctx.lineWidth = lineWidth * 0.85;
-
-        for (const [i, j] of HAND_CONNECTIONS) {
-          const p1 = jitteredHand[i];
-          const p2 = jitteredHand[j];
-          if (p1 && p2) {
-            this.drawJitteredLine(p1.pt, p2.pt, skeletonJitter * 0.6, w);
+        if (isZapping && zapIntensity > 0.05) {
+          const hColor = inter.zapDirection === 'prev' ? '#ffd166' : '#ffffff';
+          for (const [i, j] of HAND_CONNECTIONS) {
+            const p1 = jitteredHand[i];
+            const p2 = jitteredHand[j];
+            if (p1 && p2) {
+              this.drawLightningArc(p1.pt, p2.pt, zapIntensity * 0.8, w, hColor);
+            }
+          }
+        } else {
+          this.ctx.strokeStyle = palette.handStroke;
+          this.ctx.lineWidth = lineWidth * 0.85;
+          for (const [i, j] of HAND_CONNECTIONS) {
+            const p1 = jitteredHand[i];
+            const p2 = jitteredHand[j];
+            if (p1 && p2) {
+              this.drawJitteredLine(p1.pt, p2.pt, skeletonJitter * 0.6, w);
+            }
           }
         }
         this.ctx.restore();

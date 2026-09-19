@@ -264,6 +264,22 @@ export class VideoQueue {
     await this.playCurrent();
   }
 
+  async random(): Promise<void> {
+    if (this.items.length === 0) return;
+    if (this.items.length === 1) {
+      this.index = 0;
+      await this.playCurrent();
+      return;
+    }
+    // Select a random index guaranteed to be different from current index
+    let nextIdx = Math.floor(Math.random() * (this.items.length - 1));
+    if (nextIdx >= (this.index % this.items.length)) {
+      nextIdx++;
+    }
+    this.index = nextIdx % this.items.length;
+    await this.playCurrent();
+  }
+
   getCurrentItem(): PlaylistItem | null {
     if (this.items.length === 0) return null;
     return this.items[this.index % this.items.length] || null;

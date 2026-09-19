@@ -206,6 +206,93 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Synthesizes an authentic analog CRT rotary channel switch zap sound
+   * with mechanical contact click, high-voltage spark sizzle, and directional RF chirp.
+   */
+  playZapSound(direction: 'prev' | 'next' | 'random' = 'random'): void {
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+
+    try {
+      // 1. Mechanical Rotary Tuner Click / Thunk (40-160Hz contact pop)
+      const oscThunk = ctx.createOscillator();
+      const gainThunk = ctx.createGain();
+      oscThunk.type = 'triangle';
+      oscThunk.frequency.setValueAtTime(160, t);
+      oscThunk.frequency.exponentialRampToValueAtTime(32, t + 0.07);
+      gainThunk.gain.setValueAtTime(0.35, t);
+      gainThunk.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+      oscThunk.connect(gainThunk);
+      gainThunk.connect(this.masterGain);
+      oscThunk.start(t);
+      oscThunk.stop(t + 0.09);
+
+      // 2. High-Voltage Electric Arc / RF Static Crackle (Burst of bandpass noise)
+      const bufferSize = Math.floor(ctx.sampleRate * 0.18);
+      const sparkBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const sparkData = sparkBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        sparkData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.04));
+      }
+      const sparkSource = ctx.createBufferSource();
+      sparkSource.buffer = sparkBuffer;
+
+      const sparkFilter = ctx.createBiquadFilter();
+      sparkFilter.type = 'bandpass';
+      sparkFilter.frequency.setValueAtTime(3800, t);
+      sparkFilter.Q.setValueAtTime(2.5, t);
+
+      const sparkGain = ctx.createGain();
+      sparkGain.gain.setValueAtTime(0.38, t);
+      sparkGain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+
+      sparkSource.connect(sparkFilter);
+      sparkFilter.connect(sparkGain);
+      sparkGain.connect(this.masterGain);
+      sparkSource.start(t);
+      sparkSource.stop(t + 0.18);
+
+      // 3. Directional Electronic Zap Chirp
+      const zapOsc = ctx.createOscillator();
+      const zapGain = ctx.createGain();
+      zapOsc.type = 'sawtooth';
+
+      if (direction === 'prev') {
+        zapOsc.frequency.setValueAtTime(2400, t);
+        zapOsc.frequency.exponentialRampToValueAtTime(450, t + 0.14);
+      } else if (direction === 'next') {
+        zapOsc.frequency.setValueAtTime(650, t);
+        zapOsc.frequency.exponentialRampToValueAtTime(3200, t + 0.14);
+      } else {
+        // Random zap: rapid multi-harmonic tuning surge
+        zapOsc.frequency.setValueAtTime(1200, t);
+        zapOsc.frequency.exponentialRampToValueAtTime(3600, t + 0.06);
+        zapOsc.frequency.exponentialRampToValueAtTime(500, t + 0.14);
+      }
+
+      zapGain.gain.setValueAtTime(0.12, t);
+      zapGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+
+      zapOsc.connect(zapGain);
+      zapGain.connect(this.masterGain);
+      zapOsc.start(t);
+      zapOsc.stop(t + 0.16);
+
+      // 4. Brief Video Audio Cutout (Analog contact break)
+      if (this.videoGain) {
+        const curVol = this.videoGain.gain.value;
+        this.videoGain.gain.cancelScheduledValues(t);
+        this.videoGain.gain.setValueAtTime(curVol * 0.1, t);
+        this.videoGain.gain.setTargetAtTime(curVol, t + 0.08, 0.06);
+      }
+    } catch (err) {
+      console.warn('[v-feed audio] Zap sound synthesis warning:', err);
+    }
+  }
+
   dispose(): void {
     this.unsub?.();
     void this.ctx?.close();

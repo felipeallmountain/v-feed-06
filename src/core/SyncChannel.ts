@@ -67,6 +67,9 @@ export interface TelemetryTickPayload {
     cooldownRemainingSec: number;
     lastQuery: string | null;
     lastTriggerReason: string | null;
+    zapActive?: boolean;
+    zapDirection?: string | null;
+    zapScreenIndex?: number | null;
   };
   quota?: QuotaState;
   video?: VideoTelemetry;
@@ -85,7 +88,10 @@ export type RemoteCommandAction =
   | 'save_disk'
   | 'set_video_mode'
   | 'toggle_quota_protection'
-  | 'apply_preset';
+  | 'apply_preset'
+  | 'zap_prev'
+  | 'zap_next'
+  | 'zap_random';
 
 export interface RemoteCommandPayload {
   action: RemoteCommandAction;

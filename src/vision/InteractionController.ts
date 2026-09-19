@@ -1,13 +1,20 @@
 import { useAppStore } from '../core/StateManager';
 import {
+  SCREEN_POSE_MAP,
   synthesizeBroadcastQuery,
   type InteractionFeatureState,
+  type SemanticPose,
   type SynthesizedQuery,
 } from './BroadcastQuerySynthesizer';
 import { FeatureExtractor } from './FeatureExtractor';
 import type { TrackerFrame } from './MediaPipeTracker';
 
 export type QuerySynthesizedCallback = (query: SynthesizedQuery) => void;
+export type PoseZapCallback = (
+  direction: 'prev' | 'next' | 'random',
+  pose: SemanticPose,
+  screenIndex: number,
+) => void;
 
 export class InteractionController {
   private extractor = new FeatureExtractor();
@@ -18,9 +25,24 @@ export class InteractionController {
   private stillnessDurationMs = 0;
   private lastUpdateTs = 0;
   private onQueryCallback: QuerySynthesizedCallback | null = null;
+  private onPoseZapCallback: PoseZapCallback | null = null;
 
   onQuerySynthesized(callback: QuerySynthesizedCallback): void {
     this.onQueryCallback = callback;
+  }
+
+  onPoseZap(callback: PoseZapCallback): void {
+    this.onPoseZapCallback = callback;
+  }
+
+  private getScreenIndexForPose(pose: SemanticPose): number {
+    if (pose === 'NONE') return -1;
+    for (const [screenStr, p] of Object.entries(SCREEN_POSE_MAP)) {
+      if (p === pose) {
+        return Number(screenStr);
+      }
+    }
+    return -1;
   }
 
   /**
@@ -37,8 +59,6 @@ export class InteractionController {
 
     const store = useAppStore.getState();
     const interactionSettings = store.interaction;
-    const holdDurationMs = interactionSettings.holdDurationMs || 1800;
-    const cooldownDurationMs = (interactionSettings.cooldownDurationSec || 10) * 1000;
     const calibratedDistance = store.tracking.distance || 2.0;
 
     // 1. Extract physical and semantic features from camera and pose landmarks
@@ -74,7 +94,17 @@ export class InteractionController {
       priorityReason = `Kinetics: ${features.kinetics}`;
     }
 
-    // 3. Debouncing & Hold Timer (1.5s - 2.0s)
+    // Determine tailored hold & cooldown durations for snappy channel zapping vs ambient queries
+    const isPoseCandidate = currentPriorityKey?.startsWith('POSE:') ?? false;
+    const zapEnabled = interactionSettings.zapEnabled !== false;
+    const holdDurationMs = isPoseCandidate && zapEnabled
+      ? (interactionSettings.zapHoldDurationMs || 1200)
+      : (interactionSettings.holdDurationMs || 1800);
+    const cooldownDurationMs = isPoseCandidate && zapEnabled
+      ? ((interactionSettings.zapCooldownSec ?? 2) * 1000)
+      : ((interactionSettings.cooldownDurationSec || 10) * 1000);
+
+    // 3. Debouncing & Hold Timer
     let holdProgress = 0;
     let isHolding = false;
 
@@ -101,22 +131,44 @@ export class InteractionController {
         holdProgress = 0;
         isHolding = false;
 
-        const synthesized = synthesizeBroadcastQuery(features);
-        synthesized.sourceTrigger = priorityReason || synthesized.sourceTrigger;
+        const screenIndex = this.getScreenIndexForPose(features.pose);
 
-        console.log(
-          `[v-feed] ⚡ Interaction Triggered [${synthesized.sourceTrigger}] → Query: "${synthesized.rawQuery}"`,
-        );
+        // Check if this is a CRT pose zap action
+        if (zapEnabled && screenIndex !== -1) {
+          // Any of the 6 poses matched -> switch to a new random video
+          const direction: 'random' = 'random';
+          const crtNum = screenIndex + 1;
+          const poseName = features.pose.replace('POSE_', '');
+          const triggerReason = `⚡ ZAP RANDOM [CRT 0${crtNum} - ${poseName}]`;
 
-        // Update store with query dispatch history
-        store.patchInteraction({
-          lastQuery: synthesized.rawQuery,
-          lastCategory: synthesized.category,
-          lastTriggerReason: synthesized.sourceTrigger,
-        });
+          console.log(
+            `[v-feed] ⚡ Pose Matched [CRT 0${crtNum} ${poseName}] → RANDOM VIDEO (Zapping Body Effect)`,
+          );
 
-        // Fire registered callback for video queue ingestion/playback
-        this.onQueryCallback?.(synthesized);
+          store.patchInteraction({
+            lastTriggerReason: triggerReason,
+          });
+
+          this.onPoseZapCallback?.(direction, features.pose, screenIndex);
+        } else {
+          // Fallback / standard broadcast query synthesis for density or kinetics
+          const synthesized = synthesizeBroadcastQuery(features);
+          synthesized.sourceTrigger = priorityReason || synthesized.sourceTrigger;
+
+          console.log(
+            `[v-feed] ⚡ Interaction Triggered [${synthesized.sourceTrigger}] → Query: "${synthesized.rawQuery}"`,
+          );
+
+          // Update store with query dispatch history
+          store.patchInteraction({
+            lastQuery: synthesized.rawQuery,
+            lastCategory: synthesized.category,
+            lastTriggerReason: synthesized.sourceTrigger,
+          });
+
+          // Fire registered callback for video queue ingestion/playback
+          this.onQueryCallback?.(synthesized);
+        }
       }
     } else {
       // If current key matches what already triggered or is null, reset hold timer

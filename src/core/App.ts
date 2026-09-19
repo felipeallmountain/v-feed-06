@@ -16,6 +16,7 @@ import { CameraManager } from '../vision/CameraManager';
 import { GestureMapper } from '../vision/GestureMapper';
 import { InteractionController } from '../vision/InteractionController';
 import { MediaPipeTracker } from '../vision/MediaPipeTracker';
+import { type SemanticPose } from '../vision/BroadcastQuerySynthesizer';
 import { syncChannel } from '../core/SyncChannel';
 
 export class App {
@@ -47,6 +48,8 @@ export class App {
   private perfBadgeEl: HTMLElement | null = null;
   private perfPollTimer: number | null = null;
   private perfKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private zapTimeRemainingMs = 0;
+  private readonly zapTotalDurationMs = 750;
 
   async start(): Promise<void> {
     const canvas = document.querySelector<HTMLCanvasElement>('#stage');
@@ -97,6 +100,11 @@ export class App {
       void this.videoQueue.triggerInteractionQuery(query.rawQuery, query.sourceTrigger);
     });
 
+    // Register pose zap dispatcher → VideoQueue navigation & electric body zapping
+    this.interaction.onPoseZap((direction, pose, screenIndex) => {
+      this.triggerZap(direction, pose, screenIndex);
+    });
+
     // Cross-window sync bridge (Main Stage Role)
     syncChannel.startHeartbeat('main');
     this.unsubscribeSync = syncChannel.onMessage((msg) => {
@@ -119,6 +127,12 @@ export class App {
           void this.videoQueue.next();
         } else if (action === 'prev') {
           void this.videoQueue.prev();
+        } else if (action === 'zap_random') {
+          this.triggerZap('random', 'POSE_ANTENNA', 0);
+        } else if (action === 'zap_prev') {
+          this.triggerZap('prev', 'POSE_ANTENNA', 0);
+        } else if (action === 'zap_next') {
+          this.triggerZap('next', 'POSE_DIAL_TUNER', 1);
         } else if (action === 'seek') {
           if (feedVideo.duration) {
             feedVideo.currentTime = (value / 100) * feedVideo.duration;
@@ -234,6 +248,26 @@ export class App {
       if (ts - this.lastTelemetryTs > 50) {
         this.lastTelemetryTs = ts;
         this.sendTelemetryTick(feedVideo);
+      }
+
+      // Update Zap Animation decay timer (driving body electric lightning & CRT glitch pulse)
+      if (this.zapTimeRemainingMs > 0) {
+        this.zapTimeRemainingMs = Math.max(0, this.zapTimeRemainingMs - dt);
+        const zapProgress = this.zapTimeRemainingMs / this.zapTotalDurationMs;
+        const curInter = useAppStore.getState().interaction;
+        if (zapProgress <= 0 && curInter.zapActive) {
+          useAppStore.getState().patchInteraction({
+            zapActive: false,
+            zapProgress: 0,
+            zapDirection: null,
+            zapPose: null,
+            zapScreenIndex: null,
+          });
+        } else if (zapProgress > 0) {
+          useAppStore.getState().patchInteraction({
+            zapProgress,
+          });
+        }
       }
 
       this.skeleton?.draw(frame);
@@ -362,6 +396,46 @@ export class App {
     this.unlocking = false;
   }
 
+  /**
+   * Executes the full multi-sensory CRT channel zap sequence:
+   * 1. High-voltage electric lightning body effect
+   * 2. Analog CRT tuner audio click & spark sizzle
+   * 3. Video playlist navigation (Previous for CRT 1,3,5; Next for CRT 2,4,6)
+   * 4. Transient CRT shader glitch pulse (RGB split & horizontal tear)
+   */
+  triggerZap(direction: 'prev' | 'next' | 'random', pose: SemanticPose, screenIndex: number): void {
+    const store = useAppStore.getState();
+    const crtNum = screenIndex + 1;
+    const poseName = pose.replace('POSE_', '');
+
+    this.zapTimeRemainingMs = this.zapTotalDurationMs;
+
+    store.patchInteraction({
+      zapActive: true,
+      zapDirection: direction,
+      zapPose: pose,
+      zapScreenIndex: screenIndex,
+      zapProgress: 1.0,
+      zapIntensity: 1.0,
+      lastTriggerReason: `⚡ ZAP ${direction.toUpperCase()} [CRT 0${crtNum} - ${poseName}]`,
+    });
+
+    // 1. Play vintage CRT channel-change zap sound
+    this.audio.playZapSound(direction);
+
+    // 2. Channel Navigation (Random / Previous / Next)
+    if (direction === 'random') {
+      void this.videoQueue.random();
+      this.showToast(`⚡ RANDOM VIDEO ZAP [CRT 0${crtNum} · ${poseName}]`, 2200);
+    } else if (direction === 'prev') {
+      void this.videoQueue.prev();
+      this.showToast(`⚡ ZAP PREV VIDEO [CRT 0${crtNum} · ${poseName}]`, 2200);
+    } else {
+      void this.videoQueue.next();
+      this.showToast(`⚡ ZAP NEXT VIDEO [CRT 0${crtNum} · ${poseName}]`, 2200);
+    }
+  }
+
   private sendTelemetryTick(feedVideo: HTMLVideoElement): void {
     const curState = useAppStore.getState();
     const curInter = curState.interaction;
@@ -387,6 +461,9 @@ export class App {
         cooldownRemainingSec: curInter.cooldownRemainingSec,
         lastQuery: curInter.lastQuery,
         lastTriggerReason: curInter.lastTriggerReason,
+        zapActive: curInter.zapActive,
+        zapDirection: curInter.zapDirection,
+        zapScreenIndex: curInter.zapScreenIndex,
       },
       quota: curState.quota,
       video: {

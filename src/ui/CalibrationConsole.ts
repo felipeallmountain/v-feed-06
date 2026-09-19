@@ -80,6 +80,7 @@ export class CalibrationConsole {
     chroma: string;
     hold: string;
     cooldown: string;
+    zapStatus: string;
     quotaUsage: string;
     quotaSaver: boolean;
     lastQuery: string;
@@ -232,6 +233,15 @@ export class CalibrationConsole {
         t.interaction.cooldownRemainingSec > 0
           ? `${t.interaction.cooldownRemainingSec}s`
           : 'Ready';
+      if (t.interaction.zapActive) {
+        const dir = (t.interaction.zapDirection ?? 'next').toUpperCase();
+        const scr = t.interaction.zapScreenIndex !== undefined && t.interaction.zapScreenIndex !== null
+          ? ` [CRT 0${t.interaction.zapScreenIndex + 1}]`
+          : '';
+        this.interactionReadouts.zapStatus = `⚡ ZAPPING ${dir}${scr}`;
+      } else {
+        this.interactionReadouts.zapStatus = 'Idle (Ready)';
+      }
       this.interactionReadouts.lastQuery = t.interaction.lastQuery || 'None';
       if (t.quota) {
         this.interactionReadouts.quotaUsage = `${t.quota.percentage}% (${(t.quota.unitsUsed / 1000).toFixed(1)}k/${(t.quota.dailyBudget / 1000).toFixed(1)}k)`;
@@ -1371,6 +1381,7 @@ export class CalibrationConsole {
       chroma: 'NEUTRAL',
       hold: '0%',
       cooldown: 'Ready',
+      zapStatus: 'Idle (Ready)',
       quotaUsage: '0% (0.0k/9.0k)',
       quotaSaver: store.quota?.isProtectedMode ?? false,
       lastQuery: 'None',
@@ -1401,6 +1412,67 @@ export class CalibrationConsole {
         'triggerTest',
       )
       .name('⚡ Trigger Test Query');
+
+    // --- POSE ZAPPING & CHANNEL SWITCHING (6 TVs) ---
+    const zapFolder = interFolder.addFolder('Pose Zapping & Channel Surfing (6 TVs)');
+    zapFolder.open();
+
+    const zapSettings = {
+      zapEnabled: store.interaction?.zapEnabled ?? true,
+      zapHoldSec: (store.interaction?.zapHoldDurationMs ?? 1200) / 1000,
+      zapCooldownSec: store.interaction?.zapCooldownSec ?? 2.0,
+      zapVisualIntensity: store.interaction?.zapVisualIntensity ?? 1.0,
+      testZapRandom: () => {
+        syncChannel.sendCommand('zap_random');
+        this.showToast('⚡ ZAP RANDOM Triggered (Any Pose) — New Random Video');
+      },
+      testZapPrev: () => {
+        syncChannel.sendCommand('zap_prev');
+        this.showToast('⚡ ZAP PREV Triggered (CRT 1, 3, 5) — Previous Video');
+      },
+      testZapNext: () => {
+        syncChannel.sendCommand('zap_next');
+        this.showToast('⚡ ZAP NEXT Triggered (CRT 2, 4, 6) — Next Video');
+      },
+    };
+
+    zapFolder
+      .add(zapSettings, 'zapEnabled')
+      .name('Enable Pose Zapping')
+      .onChange((v: boolean) => {
+        store.patchInteraction({ zapEnabled: v });
+        this.broadcastPatch({ interaction: { zapEnabled: v } });
+      });
+
+    zapFolder
+      .add(zapSettings, 'zapHoldSec', 0.4, 3.0, 0.1)
+      .name('Zap Hold Time (s)')
+      .onChange((v: number) => {
+        const ms = Math.round(v * 1000);
+        store.patchInteraction({ zapHoldDurationMs: ms });
+        this.broadcastPatch({ interaction: { zapHoldDurationMs: ms } });
+      });
+
+    zapFolder
+      .add(zapSettings, 'zapCooldownSec', 1.0, 10.0, 0.5)
+      .name('Zap Cooldown (s)')
+      .onChange((v: number) => {
+        store.patchInteraction({ zapCooldownSec: v });
+        this.broadcastPatch({ interaction: { zapCooldownSec: v } });
+      });
+
+    zapFolder
+      .add(zapSettings, 'zapVisualIntensity', 0.2, 2.0, 0.1)
+      .name('Lightning Intensity')
+      .onChange((v: number) => {
+        store.patchInteraction({ zapVisualIntensity: v });
+        this.broadcastPatch({ interaction: { zapVisualIntensity: v } });
+      });
+
+    zapFolder.add(this.interactionReadouts, 'zapStatus').name('Zap State').disable();
+    zapFolder.add(zapSettings, 'testZapRandom').name('⚡ Test Random Zap (Any Pose)');
+    zapFolder.add(zapSettings, 'testZapPrev').name('⚡ Test Zap Prev (CRT 1,3,5)');
+    zapFolder.add(zapSettings, 'testZapNext').name('⚡ Test Zap Next (CRT 2,4,6)');
 
     // --- 11. VIDEO & INGESTION ---
     const video = gui.addFolder('Video & Ingestion');

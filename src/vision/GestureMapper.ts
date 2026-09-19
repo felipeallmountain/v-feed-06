@@ -228,9 +228,19 @@ export class GestureMapper {
 
     // FR-03.4 Velocity & Kinetic Energy Glitch Modulation
     const kineticEnergy = store.interaction?.kineticEnergy ?? velNorm;
-    const rgbSplit = THREE_CLAMP(kineticEnergy * 1.6, 0, 2.0);
-    const hJitter = THREE_CLAMP(kineticEnergy * 1.1, 0, 1.2);
-    const vHold = (1 - effectiveAvgLock) * 0.35 + stillnessFade * 0.5;
+    let rgbSplit = THREE_CLAMP(kineticEnergy * 1.6, 0, 2.0);
+    let hJitter = THREE_CLAMP(kineticEnergy * 1.1, 0, 1.2);
+    let vHold = (1 - effectiveAvgLock) * 0.35 + stillnessFade * 0.5;
+
+    // Transient CRT Channel Switch Zap Glitch Surge
+    const zapProg = store.interaction?.zapProgress ?? 0;
+    if (zapProg > 0) {
+      const zapVis = store.interaction?.zapVisualIntensity ?? 1.0;
+      const zapFactor = zapProg * zapVis;
+      rgbSplit = Math.min(2.5, rgbSplit + zapFactor * 0.95);
+      hJitter = Math.min(1.5, hJitter + zapFactor * 0.75);
+      vHold = Math.min(1.0, vHold + Math.sin(zapProg * Math.PI) * 0.35);
+    }
 
     // FR-03.3 Localized Hand Interference
     const handActive = leftHand.active || rightHand.active;

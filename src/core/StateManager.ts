@@ -42,6 +42,16 @@ export interface InteractionState {
   lastCategory: string | null;
   lastTriggerReason: string | null;
   stillnessDurationSec: number;
+  zapActive: boolean;
+  zapDirection: 'prev' | 'next' | 'random' | null;
+  zapPose: SemanticPose | null;
+  zapScreenIndex: number | null;
+  zapIntensity: number;
+  zapProgress: number;
+  zapCooldownSec: number;
+  zapHoldDurationMs: number;
+  zapVisualIntensity: number;
+  zapEnabled: boolean;
 }
 
 export interface QuotaState {
@@ -305,6 +315,16 @@ export const DEFAULT_INTERACTION_STATE: InteractionState = {
   lastCategory: null,
   lastTriggerReason: null,
   stillnessDurationSec: 0,
+  zapActive: false,
+  zapDirection: null,
+  zapPose: null,
+  zapScreenIndex: null,
+  zapIntensity: 0,
+  zapProgress: 0,
+  zapCooldownSec: 2,
+  zapHoldDurationMs: 1200,
+  zapVisualIntensity: 1.0,
+  zapEnabled: true,
 };
 
 export const DEFAULT_QUOTA_STATE: QuotaState = {
