@@ -39,6 +39,7 @@ export interface SavedCalibration {
     showLines?: boolean;
     showDots?: boolean;
     jitter?: number;
+    smoothing?: number;
   };
   frames?: Partial<FrameState>;
   audio?: Partial<AudioState>;
@@ -103,6 +104,9 @@ export class CalibrationManager {
       }
       if (saved.skeleton.jitter !== undefined) {
         store.setSkeletonJitter(saved.skeleton.jitter);
+      }
+      if (saved.skeleton.smoothing !== undefined) {
+        store.setSkeletonSmoothing(saved.skeleton.smoothing);
       }
     }
     if (saved.frames) {
@@ -188,6 +192,7 @@ export class CalibrationManager {
         showLines: state.skeletonShowLines,
         showDots: state.skeletonShowDots,
         jitter: state.skeletonJitter,
+        smoothing: state.skeletonSmoothing,
       },
       frames: state.frames,
       audio: state.audio,

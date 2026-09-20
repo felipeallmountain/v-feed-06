@@ -131,7 +131,14 @@ export class YouTubeService {
     playlistId?: string;
     searchTopic?: string;
     maxVideos?: number;
-  }): Promise<{ ok: boolean; queued: number; alreadyCached: number; totalFound: number }> {
+  }): Promise<{
+    ok: boolean;
+    queued: number;
+    alreadyCached: number;
+    totalFound: number;
+    quotaProtected?: boolean;
+    matchedLocalVideos?: Array<{ id: string; filename?: string; title?: string }>;
+  }> {
     const res = await fetch('/api/ingest/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

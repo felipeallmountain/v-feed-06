@@ -31,6 +31,7 @@ export interface StatePatchPayload {
   skeletonShowLines?: boolean;
   skeletonShowDots?: boolean;
   skeletonJitter?: number;
+  skeletonSmoothing?: number;
   debugOverlay?: boolean;
   debugViewMode?: 'video' | 'camera' | 'split';
 }

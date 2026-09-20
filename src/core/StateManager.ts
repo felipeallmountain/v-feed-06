@@ -52,6 +52,7 @@ export interface InteractionState {
   zapHoldDurationMs: number;
   zapVisualIntensity: number;
   zapEnabled: boolean;
+  zapNavMode: 'sequential' | 'directional' | 'random';
 }
 
 export interface QuotaState {
@@ -225,6 +226,7 @@ export interface AppState {
   skeletonShowLines: boolean;
   skeletonShowDots: boolean;
   skeletonJitter: number;
+  skeletonSmoothing: number;
   hudVisible: boolean;
   audioUnlocked: boolean;
   videoMode: VideoMode;
@@ -264,6 +266,7 @@ export interface AppState {
   setSkeletonShowLines: (show: boolean) => void;
   setSkeletonShowDots: (show: boolean) => void;
   setSkeletonJitter: (jitter: number) => void;
+  setSkeletonSmoothing: (smoothing: number) => void;
   setAudioUnlocked: (unlocked: boolean) => void;
   setVideoMode: (mode: VideoMode) => void;
   setCurrentVideoUrl: (url: string | null) => void;
@@ -325,6 +328,7 @@ export const DEFAULT_INTERACTION_STATE: InteractionState = {
   zapHoldDurationMs: 1200,
   zapVisualIntensity: 1.0,
   zapEnabled: true,
+  zapNavMode: 'sequential',
 };
 
 export const DEFAULT_QUOTA_STATE: QuotaState = {
@@ -538,7 +542,8 @@ export const useAppStore = createStore<AppState>((set) => ({
   skeletonDotOpacity: 0.9,
   skeletonShowLines: true,
   skeletonShowDots: true,
-  skeletonJitter: 0.35,
+  skeletonJitter: 0.05,
+  skeletonSmoothing: 0.5,
   hudVisible: false,
   audioUnlocked: false,
   videoMode: 'live',
@@ -669,6 +674,7 @@ export const useAppStore = createStore<AppState>((set) => ({
   setSkeletonShowLines: (skeletonShowLines) => set({ skeletonShowLines }),
   setSkeletonShowDots: (skeletonShowDots) => set({ skeletonShowDots }),
   setSkeletonJitter: (skeletonJitter) => set({ skeletonJitter }),
+  setSkeletonSmoothing: (skeletonSmoothing) => set({ skeletonSmoothing }),
   setAudioUnlocked: (audioUnlocked) => set({ audioUnlocked }),
   setVideoMode: (videoMode) => set({ videoMode }),
   setCurrentVideoUrl: (currentVideoUrl) => set({ currentVideoUrl }),

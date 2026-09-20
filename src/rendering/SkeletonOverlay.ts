@@ -132,6 +132,8 @@ interface QuadPoints {
 export class SkeletonOverlay {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private smoothedPoses: Array<Array<{ x: number; y: number }>> = [];
+  private smoothedHands: Array<Array<{ x: number; y: number }>> = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -160,7 +162,7 @@ export class SkeletonOverlay {
     jitterScale: number,
     width: number,
   ): { x: number; y: number } {
-    if (jitterScale <= 0) return { x, y };
+    if (jitterScale <= 0.005) return { x, y };
 
     const time = performance.now() * 0.02;
     const amp = jitterScale * 28 * (width / 1080);
@@ -1375,7 +1377,7 @@ export class SkeletonOverlay {
       const badgeText = isZapThisScreen
         ? (inter.zapDirection === 'random'
             ? `⚡ [0${i + 1}] RANDOM ZAP ⚡`
-            : i % 2 === 0
+            : inter.zapDirection === 'prev'
               ? `⚡ [0${i + 1}] PREV VIDEO ⚡`
               : `⚡ [0${i + 1}] NEXT VIDEO ⚡`)
         : `[0${i + 1}] ${poseMeta.title}`;
@@ -1560,6 +1562,7 @@ export class SkeletonOverlay {
       skeletonShowLines,
       skeletonShowDots,
       skeletonJitter,
+      skeletonSmoothing,
       shaders,
       interaction: inter,
     } = store;
@@ -1605,6 +1608,8 @@ export class SkeletonOverlay {
       !frame ||
       !frame.present
     ) {
+      this.smoothedPoses = [];
+      this.smoothedHands = [];
       return;
     }
 
@@ -1623,17 +1628,39 @@ export class SkeletonOverlay {
           ? [frame.landmarks]
           : [];
 
+    const smoothing = Math.min(Math.max(skeletonSmoothing ?? 0.5, 0), 0.98);
+    const newSmoothedPoses: Array<Array<{ x: number; y: number }>> = [];
+
     let personSeed = 0;
+    let personIdx = 0;
     for (const lm of poses) {
       personSeed += 100;
+      const prevLm = this.smoothedPoses[personIdx] || [];
+      const currSmoothed: Array<{ x: number; y: number }> = [];
+
       const jitteredLms = lm.map((p, idx) => {
-        const rawX = p.x * w;
-        const rawY = p.y * h;
+        let sx = p.x;
+        let sy = p.y;
+        if (smoothing > 0 && prevLm[idx]) {
+          const dx = p.x - prevLm[idx].x;
+          const dy = p.y - prevLm[idx].y;
+          // Smooth unless movement is large (>0.3 of screen width/height, indicating teleport/new person)
+          if (dx * dx + dy * dy < 0.09) {
+            sx = prevLm[idx].x * smoothing + p.x * (1 - smoothing);
+            sy = prevLm[idx].y * smoothing + p.y * (1 - smoothing);
+          }
+        }
+        currSmoothed[idx] = { x: sx, y: sy };
+
+        const rawX = sx * w;
+        const rawY = sy * h;
         return {
           ...p,
           pt: this.getJitteredPoint(rawX, rawY, personSeed + idx, skeletonJitter, w),
         };
       });
+      newSmoothedPoses.push(currSmoothed);
+      personIdx++;
 
       // Draw Pose Lines
       if (skeletonShowLines) {
@@ -1711,7 +1738,7 @@ export class SkeletonOverlay {
           this.ctx.fillStyle = palette.joint;
           for (const p of jitteredLms) {
             if ((p.visibility ?? 1) > 0.3) {
-              const r = dotRadius * (1.0 + Math.random() * skeletonJitter * 0.4);
+              const r = skeletonJitter > 0.05 ? dotRadius * (1.0 + Math.random() * skeletonJitter * 0.4) : dotRadius;
               this.ctx.beginPath();
               this.ctx.arc(p.pt.x, p.pt.y, r, 0, Math.PI * 2);
               this.ctx.fill();
@@ -1727,6 +1754,7 @@ export class SkeletonOverlay {
         this.ctx.restore();
       }
     }
+    this.smoothedPoses = newSmoothedPoses;
 
     // Body-to-Screen Energy Beam (Discharge pulse from spectator towards target CRT)
     if (
@@ -1784,19 +1812,38 @@ export class SkeletonOverlay {
         ? frame.allHands.map((h) => h.landmarks)
         : [frame.leftHand, frame.rightHand];
 
+    const newSmoothedHands: Array<Array<{ x: number; y: number }>> = [];
     let handIdx = 1000;
+    let handPersonIdx = 0;
     for (const handLms of hands) {
       handIdx += 50;
       if (!handLms || handLms.length === 0) continue;
 
+      const prevH = this.smoothedHands[handPersonIdx] || [];
+      const currSmoothedH: Array<{ x: number; y: number }> = [];
+
       const jitteredHand = handLms.map((p, idx) => {
-        const rawX = p.x * w;
-        const rawY = p.y * h;
+        let sx = p.x;
+        let sy = p.y;
+        if (smoothing > 0 && prevH[idx]) {
+          const dx = p.x - prevH[idx].x;
+          const dy = p.y - prevH[idx].y;
+          if (dx * dx + dy * dy < 0.09) {
+            sx = prevH[idx].x * smoothing + p.x * (1 - smoothing);
+            sy = prevH[idx].y * smoothing + p.y * (1 - smoothing);
+          }
+        }
+        currSmoothedH[idx] = { x: sx, y: sy };
+
+        const rawX = sx * w;
+        const rawY = sy * h;
         return {
           ...p,
           pt: this.getJitteredPoint(rawX, rawY, handIdx + idx, skeletonJitter * 0.85, w),
         };
       });
+      newSmoothedHands.push(currSmoothedH);
+      handPersonIdx++;
 
       if (skeletonShowLines) {
         this.ctx.save();
@@ -1829,7 +1876,7 @@ export class SkeletonOverlay {
         this.ctx.globalAlpha = Math.min(Math.max(skeletonDotOpacity, 0), 1);
         this.ctx.fillStyle = palette.handJoint;
         for (const p of jitteredHand) {
-          const r = dotRadius * 0.7 * (1.0 + Math.random() * skeletonJitter * 0.3);
+          const r = skeletonJitter > 0.05 ? dotRadius * 0.7 * (1.0 + Math.random() * skeletonJitter * 0.3) : dotRadius * 0.7;
           this.ctx.beginPath();
           this.ctx.arc(p.pt.x, p.pt.y, r, 0, Math.PI * 2);
           this.ctx.fill();
@@ -1837,6 +1884,7 @@ export class SkeletonOverlay {
         this.ctx.restore();
       }
     }
+    this.smoothedHands = newSmoothedHands;
 
     this.ctx.restore();
   }

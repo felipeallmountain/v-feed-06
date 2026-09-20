@@ -2,6 +2,7 @@ import { useAppStore } from '../core/StateManager';
 import {
   SCREEN_POSE_MAP,
   synthesizeBroadcastQuery,
+  type AudienceDensity,
   type InteractionFeatureState,
   type SemanticPose,
   type SynthesizedQuery,
@@ -24,6 +25,8 @@ export class InteractionController {
   private cooldownRemainingMs = 0;
   private stillnessDurationMs = 0;
   private lastUpdateTs = 0;
+  private lastDensityState: AudienceDensity = 'EMPTY';
+  private poseReleaseTimeMs = 0;
   private onQueryCallback: QuerySynthesizedCallback | null = null;
   private onPoseZapCallback: PoseZapCallback | null = null;
 
@@ -76,6 +79,19 @@ export class InteractionController {
       this.cooldownRemainingMs = Math.max(0, this.cooldownRemainingMs - dt);
     }
 
+    // Track pose release duration to clear lastTriggeredKey when spectator relaxes arms
+    if (features.pose === 'NONE') {
+      if (this.lastTriggeredKey?.startsWith('POSE:')) {
+        this.poseReleaseTimeMs += dt;
+        if (this.poseReleaseTimeMs >= 350) {
+          this.lastTriggeredKey = null;
+          this.poseReleaseTimeMs = 0;
+        }
+      }
+    } else {
+      this.poseReleaseTimeMs = 0;
+    }
+
     // 2. Evaluate Conflict Resolution & Priority Ladder
     // Priority 1: Semantic Key Poses (Antenna, Surprise, Wingsuit)
     // Priority 2: Audience Density Shifts (Solo, Duo, Group)
@@ -86,12 +102,16 @@ export class InteractionController {
     if (features.pose !== 'NONE') {
       currentPriorityKey = `POSE:${features.pose}`;
       priorityReason = `Pose: ${features.pose.replace('POSE_', '')}`;
-    } else if (features.density !== 'EMPTY') {
+    } else if (features.density !== 'EMPTY' && features.density !== this.lastDensityState) {
       currentPriorityKey = `DENSITY:${features.density}`;
       priorityReason = `Density: ${features.density}`;
     } else if (features.kinetics !== 'STEADY') {
       currentPriorityKey = `KINETIC:${features.kinetics}`;
       priorityReason = `Kinetics: ${features.kinetics}`;
+    }
+
+    if (features.density === 'EMPTY') {
+      this.lastDensityState = 'EMPTY';
     }
 
     // Determine tailored hold & cooldown durations for snappy channel zapping vs ambient queries
@@ -135,14 +155,23 @@ export class InteractionController {
 
         // Check if this is a CRT pose zap action
         if (zapEnabled && screenIndex !== -1) {
-          // Any of the 6 poses matched -> switch to a new random video
-          const direction: 'random' = 'random';
+          const navMode = interactionSettings.zapNavMode ?? 'sequential';
+          let direction: 'prev' | 'next' | 'random' = 'next';
+          if (navMode === 'directional') {
+            direction = screenIndex % 2 === 0 ? 'prev' : 'next';
+          } else if (navMode === 'random') {
+            direction = 'random';
+          } else {
+            // 'sequential' (default) -> moves videos one after another
+            direction = 'next';
+          }
+
           const crtNum = screenIndex + 1;
           const poseName = features.pose.replace('POSE_', '');
-          const triggerReason = `⚡ ZAP RANDOM [CRT 0${crtNum} - ${poseName}]`;
+          const triggerReason = `⚡ ZAP ${direction.toUpperCase()} [CRT 0${crtNum} - ${poseName}]`;
 
           console.log(
-            `[v-feed] ⚡ Pose Matched [CRT 0${crtNum} ${poseName}] → RANDOM VIDEO (Zapping Body Effect)`,
+            `[v-feed] ⚡ Pose Matched [CRT 0${crtNum} ${poseName}] → ${direction.toUpperCase()} VIDEO (Zapping Body Effect)`,
           );
 
           store.patchInteraction({
@@ -151,6 +180,11 @@ export class InteractionController {
 
           this.onPoseZapCallback?.(direction, features.pose, screenIndex);
         } else {
+          // Record current density to only re-trigger on true shifts
+          if (features.density !== 'EMPTY') {
+            this.lastDensityState = features.density;
+          }
+
           // Fallback / standard broadcast query synthesis for density or kinetics
           const synthesized = synthesizeBroadcastQuery(features);
           synthesized.sourceTrigger = priorityReason || synthesized.sourceTrigger;
@@ -205,5 +239,7 @@ export class InteractionController {
     this.lastTriggeredKey = null;
     this.cooldownRemainingMs = 0;
     this.stillnessDurationMs = 0;
+    this.lastDensityState = 'EMPTY';
+    this.poseReleaseTimeMs = 0;
   }
 }

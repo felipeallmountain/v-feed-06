@@ -168,6 +168,7 @@ export class App {
         if (patch.skeletonShowLines !== undefined) store.setSkeletonShowLines(patch.skeletonShowLines);
         if (patch.skeletonShowDots !== undefined) store.setSkeletonShowDots(patch.skeletonShowDots);
         if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
+        if (patch.skeletonSmoothing !== undefined) store.setSkeletonSmoothing(patch.skeletonSmoothing);
         if (patch.debugOverlay !== undefined) store.setDebugOverlay(patch.debugOverlay);
         if (patch.debugViewMode !== undefined) store.setDebugViewMode(patch.debugViewMode);
       }

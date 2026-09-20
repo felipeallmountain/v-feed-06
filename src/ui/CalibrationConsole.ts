@@ -46,6 +46,7 @@ interface SavedCalibration {
     showLines?: boolean;
     showDots?: boolean;
     jitter?: number;
+    smoothing?: number;
   };
   frames?: Partial<FrameState>;
   audio?: Partial<AudioState>;
@@ -372,6 +373,7 @@ export class CalibrationConsole {
     if (patch.skeletonShowLines !== undefined) store.setSkeletonShowLines(patch.skeletonShowLines);
     if (patch.skeletonShowDots !== undefined) store.setSkeletonShowDots(patch.skeletonShowDots);
     if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
+    if (patch.skeletonSmoothing !== undefined) store.setSkeletonSmoothing(patch.skeletonSmoothing);
     if (patch.debugOverlay !== undefined) {
       store.setDebugOverlay(patch.debugOverlay);
       this.setDebugWindowVisible(patch.debugOverlay, false);
@@ -1419,6 +1421,7 @@ export class CalibrationConsole {
 
     const zapSettings = {
       zapEnabled: store.interaction?.zapEnabled ?? true,
+      zapNavMode: store.interaction?.zapNavMode ?? 'sequential',
       zapHoldSec: (store.interaction?.zapHoldDurationMs ?? 1200) / 1000,
       zapCooldownSec: store.interaction?.zapCooldownSec ?? 2.0,
       zapVisualIntensity: store.interaction?.zapVisualIntensity ?? 1.0,
@@ -1442,6 +1445,14 @@ export class CalibrationConsole {
       .onChange((v: boolean) => {
         store.patchInteraction({ zapEnabled: v });
         this.broadcastPatch({ interaction: { zapEnabled: v } });
+      });
+
+    zapFolder
+      .add(zapSettings, 'zapNavMode', ['sequential', 'directional', 'random'])
+      .name('Zap Nav Mode')
+      .onChange((v: 'sequential' | 'directional' | 'random') => {
+        store.patchInteraction({ zapNavMode: v });
+        this.broadcastPatch({ interaction: { zapNavMode: v } });
       });
 
     zapFolder
@@ -1586,6 +1597,7 @@ export class CalibrationConsole {
       dotSize: store.skeletonDotSize,
       dotOpacity: store.skeletonDotOpacity,
       jitter: store.skeletonJitter,
+      smoothing: store.skeletonSmoothing,
       style: store.skeletonStyle,
     };
 
@@ -1595,6 +1607,24 @@ export class CalibrationConsole {
       .onChange((v: boolean) => {
         store.setSkeletonOverlay(v);
         this.broadcastPatch({ skeletonOverlay: v });
+        this.persist();
+      });
+
+    skel
+      .add(skelState, 'jitter', 0, 1, 0.01)
+      .name('Noise / Jitter')
+      .onChange((v: number) => {
+        store.setSkeletonJitter(v);
+        this.broadcastPatch({ skeletonJitter: v });
+        this.persist();
+      });
+
+    skel
+      .add(skelState, 'smoothing', 0, 0.95, 0.05)
+      .name('Landmark Smoothing')
+      .onChange((v: number) => {
+        store.setSkeletonSmoothing(v);
+        this.broadcastPatch({ skeletonSmoothing: v });
         this.persist();
       });
 
@@ -1617,11 +1647,38 @@ export class CalibrationConsole {
       });
 
     skel
+      .add(skelState, 'lineOpacity', 0.1, 1.0, 0.05)
+      .name('Line opacity')
+      .onChange((v: number) => {
+        store.setSkeletonLineOpacity(v);
+        this.broadcastPatch({ skeletonLineOpacity: v });
+        this.persist();
+      });
+
+    skel
       .add(skelState, 'showDots')
       .name('Show dots')
       .onChange((v: boolean) => {
         store.setSkeletonShowDots(v);
         this.broadcastPatch({ skeletonShowDots: v });
+        this.persist();
+      });
+
+    skel
+      .add(skelState, 'dotSize', 0.5, 10, 0.5)
+      .name('Dot size')
+      .onChange((v: number) => {
+        store.setSkeletonDotSize(v);
+        this.broadcastPatch({ skeletonDotSize: v });
+        this.persist();
+      });
+
+    skel
+      .add(skelState, 'dotOpacity', 0.1, 1.0, 0.05)
+      .name('Dot opacity')
+      .onChange((v: number) => {
+        store.setSkeletonDotOpacity(v);
+        this.broadcastPatch({ skeletonDotOpacity: v });
         this.persist();
       });
 
@@ -2375,6 +2432,9 @@ export class CalibrationConsole {
       if (saved.skeleton.jitter !== undefined) {
         store.setSkeletonJitter(saved.skeleton.jitter);
       }
+      if (saved.skeleton.smoothing !== undefined) {
+        store.setSkeletonSmoothing(saved.skeleton.smoothing);
+      }
     }
     if (saved.frames) {
       store.setFrames(saved.frames);
@@ -2466,6 +2526,7 @@ export class CalibrationConsole {
         showLines: state.skeletonShowLines,
         showDots: state.skeletonShowDots,
         jitter: state.skeletonJitter,
+        smoothing: state.skeletonSmoothing,
       },
       frames: state.frames,
       audio: state.audio,

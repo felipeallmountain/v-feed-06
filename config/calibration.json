@@ -236,12 +236,13 @@
     "style": "phosphor",
     "thickness": 0.5,
     "lineThickness": 0.5,
-    "lineOpacity": 0.85,
+    "lineOpacity": 0.25,
     "dotSize": 5,
     "dotOpacity": 0.3,
     "showLines": true,
     "showDots": false,
-    "jitter": 0.65
+    "jitter": 0.09,
+    "smoothing": 0.5
   },
   "frames": {
     "show": true,

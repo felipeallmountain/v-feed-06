@@ -75,6 +75,7 @@ export class VideoQueue {
   private initialized = false;
   private isLoadingVideo = false;
   private lastInteractionQuery: string | null = null;
+  private recentRandomIndices: number[] = [];
 
   attach(videoPass: VideoTexturePass, scene: SceneManager): void {
     this.videoPass = videoPass;
@@ -271,12 +272,28 @@ export class VideoQueue {
       await this.playCurrent();
       return;
     }
-    // Select a random index guaranteed to be different from current index
-    let nextIdx = Math.floor(Math.random() * (this.items.length - 1));
-    if (nextIdx >= (this.index % this.items.length)) {
-      nextIdx++;
+    const total = this.items.length;
+    const current = this.index % total;
+
+    // Maintain recent history pool (up to 60% of playlist length, max 20) to prevent looping through the same videos
+    const historyLimit = Math.min(Math.floor(total * 0.6), 20);
+    const recentSet = new Set([current, ...this.recentRandomIndices]);
+
+    let candidates = Array.from({ length: total }, (_, i) => i).filter((i) => !recentSet.has(i));
+    if (candidates.length === 0) {
+      candidates = Array.from({ length: total }, (_, i) => i).filter((i) => i !== current);
+      this.recentRandomIndices = [];
     }
-    this.index = nextIdx % this.items.length;
+
+    const nextIdx =
+      candidates[Math.floor(Math.random() * candidates.length)] ?? ((current + 1) % total);
+
+    this.recentRandomIndices.push(nextIdx);
+    if (this.recentRandomIndices.length > historyLimit) {
+      this.recentRandomIndices.shift();
+    }
+
+    this.index = nextIdx;
     await this.playCurrent();
   }
 
@@ -299,7 +316,7 @@ export class VideoQueue {
     useAppStore.getState().setCurrentVideoQuery(query);
     try {
       // 1. Trigger YouTube search & ingestion in background (or local matching if in quota protection mode)
-      await this.youtube.triggerSync({
+      const res = await this.youtube.triggerSync({
         searchTopic: query,
         maxVideos: 5,
       });
@@ -307,10 +324,22 @@ export class VideoQueue {
       // 2. Refresh playlist manifest and quota status
       await this.refreshPlaylist();
 
-      // 3. If matching local videos or new queue items exist, advance immediately
-      if (this.items.length > 0) {
+      // 3. Only jump to 0 if brand-new videos were queued to front; otherwise find matched local video or advance
+      if (res && res.queued > 0) {
         this.index = 0;
         await this.playCurrent();
+      } else if (res && res.matchedLocalVideos && res.matchedLocalVideos.length > 0) {
+        const currentId = this.currentItem?.id;
+        const matched = res.matchedLocalVideos.find((m) => m.id !== currentId) || res.matchedLocalVideos[0];
+        if (matched) {
+          const matchIdx = this.items.findIndex((item) => item.id === matched.id);
+          if (matchIdx !== -1) {
+            this.index = matchIdx;
+            await this.playCurrent();
+            return;
+          }
+        }
+        await this.next();
       }
     } catch (err) {
       console.warn('[v-feed] Interaction query sync warning:', err);
