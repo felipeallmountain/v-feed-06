@@ -21,7 +21,7 @@ When developing or modifying V-FEED [06], AI agents must adhere to the following
 └─────────────────┘                             └─────────────────┘
 ```
 
-1. **Context Inspection First**: Never write code blindly. AI agents must examine [agent-plan.md](file:///home/bricktop/Projects/pabellon/v-feed-06/agent-plan.md), [docs/prd.md](file:///home/bricktop/Projects/pabellon/v-feed-06/docs/prd.md), and relevant modules in `src/` or `server/` before proposing modifications.
+1. **Context Inspection First**: Never write code blindly. AI agents must examine [agent-plan.md](../../agent-plan.md), [docs/prd.md](../prd.md), and relevant modules in `src/` or `server/` before proposing modifications.
 2. **Subsystem Isolation**: Maintain decoupled modules. For instance, the vision engine (`MediaPipeTracker.ts`) produces normalized metrics and never directly manipulates WebGL objects; instead, `GestureMapper.ts` updates `useAppStore` state, which drives `SceneManager.ts` uniforms.
 3. **Strict Type Safety**: Use TypeScript strict mode (`tsconfig.json`). Avoid `any` types for MediaPipe or Three.js objects. Define concrete interfaces for state schemas and GLSL uniform payloads.
 4. **Empirical Diagnostics**: Browser security policies (e.g. `getUserMedia` blocking, Web Audio autoplay limits) vary across environments. Agents must embed diagnostic probes (like `src/vision/cameraDiagnostics.ts`) and clear visual DOM fallbacks (`#boot-hint`, retry buttons) rather than throwing uncaught console errors.

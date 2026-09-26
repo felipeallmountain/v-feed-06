@@ -80,14 +80,14 @@ docs/architecture/
 ```
 
 ### Quick Navigation
-1. **[01. System Topology & Data Flow](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/01-system-topology-and-dataflow.md)**: How the optical camera feed transforms into audio-visual output across 6 CRT viewports.
-2. **[02. Frontend Core & State Management](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/02-frontend-core-and-state.md)**: Deep dive into [`App.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/App.ts#L21), the Zustand store [`useAppStore`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/StateManager.ts#L452), and [`SyncChannel`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/SyncChannel.ts#L109).
-3. **[03. Rendering & GLSL Shader Pipeline](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/03-rendering-and-glsl-pipeline.md)**: Single-pass composite fragment shader, closed-form inverse bilinear quad warping, and CRT glass simulation.
-4. **[04. Computer Vision & Human Antenna](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/04-computer-vision-and-human-antenna.md)**: Optical landmark tracking, feature classification (poses, crowd density, rhythm, clothing chroma), and query synthesis.
-5. **[05. Audio Synthesis Engine](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/05-audio-synthesis-engine.md)**: Real-time procedural audio graph, 15.734 kHz flyback resonance, and antenna modulation.
-6. **[06. Video Pipeline & Server Architecture](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/06-video-pipeline-and-server.md)**: Express server routes, YouTube API integration, quota budget enforcement, and offline cache resilience.
-7. **[07. Calibration System & Installation Control Deck](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/07-calibration-and-control-deck.md)**: Live operator calibration console, keystone dragging, test patterns, and web admin controls.
-8. **[08. Hardware Deployment & Operations](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/08-hardware-deployment-and-operations.md)**: Physical rack engineering, video distribution, camera placement, kiosk auto-boot, and 8-hour soak testing.
+1. **[01. System Topology & Data Flow](./01-system-topology-and-dataflow.md)**: How the optical camera feed transforms into audio-visual output across 6 CRT viewports.
+2. **[02. Frontend Core & State Management](./02-frontend-core-and-state.md)**: Deep dive into [`App.ts`](../../src/core/App.ts#L22), the Zustand store [`useAppStore`](../../src/core/StateManager.ts#L487), and [`SyncChannel`](../../src/core/SyncChannel.ts#L116).
+3. **[03. Rendering & GLSL Shader Pipeline](./03-rendering-and-glsl-pipeline.md)**: Single-pass composite fragment shader, closed-form inverse bilinear quad warping, and CRT glass simulation.
+4. **[04. Computer Vision & Human Antenna](./04-computer-vision-and-human-antenna.md)**: Optical landmark tracking, feature classification (poses, crowd density, rhythm, clothing chroma), and query synthesis.
+5. **[05. Audio Synthesis Engine](./05-audio-synthesis-engine.md)**: Real-time procedural audio graph, 15.734 kHz flyback resonance, and antenna modulation.
+6. **[06. Video Pipeline & Server Architecture](./06-video-pipeline-and-server.md)**: Express server routes, YouTube API integration, quota budget enforcement, and offline cache resilience.
+7. **[07. Calibration System & Installation Control Deck](./07-calibration-and-control-deck.md)**: Live operator calibration console, keystone dragging, test patterns, and web admin controls.
+8. **[08. Hardware Deployment & Operations](./08-hardware-deployment-and-operations.md)**: Physical rack engineering, video distribution, camera placement, kiosk auto-boot, and 8-hour soak testing.
 
 ---
 
@@ -97,7 +97,7 @@ To effectively work on V-FEED [06], keep these foundational mental models in min
 
 ### Mental Model 1: The App Emits One 1080×1920 Output Signal
 The application **does not render six separate browser windows or canvases**. The software renders **one single continuous vertical canvas (1080×1920)** at 60 FPS.
-The division of the canvas into a 2-column × 3-row grid is calculated entirely inside the GPU fragment shader ([`CompositeShader.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CompositeShader.ts#L8)) using logical boundary definitions from [`MatrixSplitter.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/MatrixSplitter.ts#L46). Physical splitters or video wall processors distribute this single canvas signal to the 6 physical CRTs.
+The division of the canvas into a 2-column × 3-row grid is calculated entirely inside the GPU fragment shader ([`CompositeShader.ts`](../../src/rendering/shaders/CompositeShader.ts#L8)) using logical boundary definitions from [`MatrixSplitter.ts`](../../src/rendering/MatrixSplitter.ts#L46). Physical splitters or video wall processors distribute this single canvas signal to the 6 physical CRTs.
 
 ### Mental Model 2: The Camera Never Stores Video
 For spectator privacy and performance, camera video frames are processed **exclusively in volatile memory** by MediaPipe Tasks Vision WebAssembly. Frames are discarded immediately after joint landmark coordinate extraction. No images or videos are ever uploaded to cloud servers or written to disk.
@@ -105,10 +105,10 @@ For spectator privacy and performance, camera video frames are processed **exclu
 ### Mental Model 3: Offline-First & Resilient
 Even if the internet goes down, YouTube blocks an API key, or no MP4 files exist on disk, **the installation will never crash or display a black screen**:
 - If YouTube API fails: The system automatically plays from the offline local MP4 cache in `public/fallback-videos/`.
-- If the local MP4 cache is completely empty: The system switches dynamically to an internal canvas-based procedural feed ([`ProceduralFeed.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/ProceduralFeed.ts#L6)) displaying animated green phosphor CRT oscilloscope waves, diagnostic telemetry, and matrix frames.
+- If the local MP4 cache is completely empty: The system switches dynamically to an internal canvas-based procedural feed ([`ProceduralFeed.ts`](../../src/rendering/ProceduralFeed.ts#L6)) displaying animated green phosphor CRT oscilloscope waves, diagnostic telemetry, and matrix frames.
 
 ### Mental Model 4: Multi-Window Operator Synchronization
-The primary display runs full-screen on the installation totem. Gallery technicians and operators can open a separate calibration window on a laptop or secondary screen ([`calibration.html`](file:///Users/mclovin/Documents/pabellon/v-feed-06/calibration.html)). Both windows communicate in real time through [`SyncChannel.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/SyncChannel.ts#L109), allowing live keystone dragging, shader tuning, and preset switching without displaying UI overlays on the public art totem.
+The primary display runs full-screen on the installation totem. Gallery technicians and operators can open a separate calibration window on a laptop or secondary screen ([`calibration.html`](../../calibration.html)). Both windows communicate in real time through [`SyncChannel.ts`](../../src/core/SyncChannel.ts#L116), allowing live keystone dragging, shader tuning, and preset switching without displaying UI overlays on the public art totem.
 
 ---
 
@@ -181,7 +181,8 @@ v-feed-06/
 │   ├── clear-cache.ts           # Reset API and video caches
 │   ├── generate-sample-video.sh # Procedural vertical MP4 generator using ffmpeg
 │   ├── kiosk.sh                 # Fullscreen Chromium kiosk boot launcher
-│   └── perf-test.ts             # Automated performance and memory soak test runner
+│   ├── perf-test.ts             # Automated performance and memory soak test runner
+│   └── test-camera-rotation.ts  # Verification test for portrait camera rotation
 ├── server/                      # Node.js Express backend application
 │   ├── index.ts                 # Express server bootstrap & static file routing
 │   ├── routes/                  # Express REST API route handlers
@@ -241,4 +242,4 @@ v-feed-06/
 
 ---
 
-*Next Step: Explore [01. System Topology & Data Flow](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/01-system-topology-and-dataflow.md) to understand the complete journey of an optical frame into the multi-CRT display.*
+*Next Step: Explore [01. System Topology & Data Flow](./01-system-topology-and-dataflow.md) to understand the complete journey of an optical frame into the multi-CRT display.*

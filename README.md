@@ -68,16 +68,16 @@ Camera frames are processed in memory only — nothing is stored or uploaded.
 
 ## Architecture Documentation
 
-For an in-depth, new-developer-friendly guide to the entire system architecture, see the **[Architecture Documentation Suite](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/README.md)**:
-- [01. System Topology & End-to-End Data Flow](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/01-system-topology-and-dataflow.md)
-- [02. Frontend Core & State Management](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/02-frontend-core-and-state.md)
-- [03. Rendering Engine & GLSL Shader Pipeline](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/03-rendering-and-glsl-pipeline.md)
-- [04. Computer Vision & "Human Antenna" Interaction](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/04-computer-vision-and-human-antenna.md)
-- [05. Audio Synthesis Engine & Acoustic Design](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/05-audio-synthesis-engine.md)
-- [06. Video Ingestion Pipeline & Server Architecture](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/06-video-pipeline-and-server.md)
-- [07. Calibration System & Installation Control Deck](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/07-calibration-and-control-deck.md)
-- [08. Hardware Deployment, Physical Setup & Operations](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/08-hardware-deployment-and-operations.md)
+For an in-depth, new-developer-friendly guide to the entire system architecture, see the **[Architecture Documentation Suite](./docs/architecture/README.md)**:
+- [01. System Topology & End-to-End Data Flow](./docs/architecture/01-system-topology-and-dataflow.md)
+- [02. Frontend Core & State Management](./docs/architecture/02-frontend-core-and-state.md)
+- [03. Rendering Engine & GLSL Shader Pipeline](./docs/architecture/03-rendering-and-glsl-pipeline.md)
+- [04. Computer Vision & "Human Antenna" Interaction](./docs/architecture/04-computer-vision-and-human-antenna.md)
+- [05. Audio Synthesis Engine & Acoustic Design](./docs/architecture/05-audio-synthesis-engine.md)
+- [06. Video Ingestion Pipeline & Server Architecture](./docs/architecture/06-video-pipeline-and-server.md)
+- [07. Calibration System & Installation Control Deck](./docs/architecture/07-calibration-and-control-deck.md)
+- [08. Hardware Deployment, Physical Setup & Operations](./docs/architecture/08-hardware-deployment-and-operations.md)
 
 ## Hardware notes
 
-See [docs/prd.md](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/prd.md) §6 and [docs/architecture/08-hardware-deployment-and-operations.md](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/08-hardware-deployment-and-operations.md) for CRT rack, adapters, lighting, and camera placement. Software soak tests (8+ hours) should be run on the exhibition machine before opening.
+See [docs/prd.md](./docs/prd.md) §6 and [docs/architecture/08-hardware-deployment-and-operations.md](./docs/architecture/08-hardware-deployment-and-operations.md) for CRT rack, adapters, lighting, and camera placement. Software soak tests (8+ hours) should be run on the exhibition machine before opening.

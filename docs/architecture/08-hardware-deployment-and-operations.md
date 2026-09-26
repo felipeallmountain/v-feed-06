@@ -82,7 +82,7 @@ When connecting multiple vintage analog monitors to a single computer, ground lo
 
 ## 3. Optical Camera Placement & Lighting
 
-Located in [`src/vision/CameraManager.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/vision/CameraManager.ts):
+Located in [`src/vision/CameraManager.ts`](../../src/vision/CameraManager.ts):
 
 ### Ideal Placement
 - **Mounting Height**: **1.8 meters** from the floor, positioned directly centered above the top row of CRTs.
@@ -99,7 +99,7 @@ Located in [`src/vision/CameraManager.ts`](file:///Users/mclovin/Documents/pabel
 
 For exhibition runnings, the system must boot automatically without showing the desktop, taskbars, or error popups.
 
-Located in [`scripts/kiosk.sh`](file:///Users/mclovin/Documents/pabellon/v-feed-06/scripts/kiosk.sh):
+Located in [`scripts/kiosk.sh`](../../scripts/kiosk.sh):
 
 ```bash
 #!/usr/bin/env bash
@@ -139,11 +139,11 @@ exec google-chrome \
 
 ---
 
-## 5. 8-Hour Exhibition Soak Testing (`scripts/perf-test.ts`)
+## 5. 8-Hour Exhibition Soak Testing (`scripts/perf-test.ts`) & Diagnostic Scripts
 
 Before opening an exhibition to the public, the software must pass an **8-hour continuous soak test** to verify zero memory leaks, steady 60 FPS frame rates, and thermal stability.
 
-Located in [`scripts/perf-test.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/scripts/perf-test.ts) and backed by [`PerformanceTracker.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/server/services/PerformanceTracker.ts):
+Located in [`scripts/perf-test.ts`](../../scripts/perf-test.ts) and backed by [`PerformanceTracker.ts`](../../server/services/PerformanceTracker.ts#L116):
 
 ### Running the Soak Test
 ```bash
@@ -158,7 +158,11 @@ The CLI dashboard displays real-time statistics:
 - **Client FPS & Frame Drops**: Tracks 60 FPS stability and 1% low frame times.
 - **Node.js Process Memory**: Monitors Heap Used, RSS, and External buffers over hours.
 - **Vision Tracking Inference Latency**: Measures MediaPipe Wasm execution time in milliseconds.
-- **Automated Report Generation**: When stopped, generates a timestamped report in [`reports/perf-report-<timestamp>.json`](file:///Users/mclovin/Documents/pabellon/v-feed-06/reports/).
+- **Automated Report Generation**: When stopped, generates a timestamped report in [`reports/perf-report-<timestamp>.md`](../../reports/) and updates `reports/perf-report-latest.md`.
+
+### Diagnostic & Maintenance Scripts
+- **Camera Rotation Verification**: [`scripts/test-camera-rotation.ts`](../../scripts/test-camera-rotation.ts) (`npx tsx scripts/test-camera-rotation.ts`) validates coordinate rotation matrices (0°, 90°, 180°, 270°) for vertical camera rigs.
+- **Cache Purge**: [`scripts/clear-cache.ts`](../../scripts/clear-cache.ts) (`npm run clear-cache`) safely cleans temp files, logs, and expired video assets.
 
 ---
 
@@ -170,11 +174,11 @@ The CLI dashboard displays real-time statistics:
 
 ### Issue 2: Audio is Silent on Startup
 - **Cause**: Browser autoplay policy blocked `AudioContext`.
-- **Resolution**: Click anywhere on the screen once to grant user gesture approval. For kiosks, launch via [`scripts/kiosk.sh`](file:///Users/mclovin/Documents/pabellon/v-feed-06/scripts/kiosk.sh) with `--autoplay-policy=no-user-gesture-required`.
+- **Resolution**: Click anywhere on the screen once to grant user gesture approval. For kiosks, launch via [`scripts/kiosk.sh`](../../scripts/kiosk.sh) with `--autoplay-policy=no-user-gesture-required`.
 
 ### Issue 3: Video is Choppy or Drops Below 60 FPS
 - **Cause**: WebGL renderer is using integrated GPU or device pixel ratio is uncapped.
-- **Resolution**: In [`src/core/constants.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/constants.ts), verify that [`MAX_DEVICE_PIXEL_RATIO`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/constants.ts#L46) is set to `2.0` (or `1.0` on lower-spec hardware). Ensure hardware acceleration is enabled in Chrome settings (`chrome://settings/system`).
+- **Resolution**: In [`src/core/constants.ts`](../../src/core/constants.ts), verify that [`MAX_DEVICE_PIXEL_RATIO`](../../src/core/constants.ts#L6) is set to `2.0` (or `1.0` on lower-spec hardware). Ensure hardware acceleration is enabled in Chrome settings (`chrome://settings/system`).
 
 ### Issue 4: YouTube API Returns Quota Exceeded (HTTP 403)
 - **Cause**: Google Cloud daily quota of 10,000 units was exhausted.
@@ -186,4 +190,4 @@ The CLI dashboard displays real-time statistics:
 
 ---
 
-*This concludes the V-FEED [06] Architecture Documentation suite. Return to the [Master Index](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/README.md) for navigation.*
+*This concludes the V-FEED [06] Architecture Documentation suite. Return to the [Master Index](./README.md) for navigation.*
