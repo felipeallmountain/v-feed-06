@@ -2,6 +2,7 @@ import {
   useAppStore,
   type AudioState,
   type FrameState,
+  type InteractionState,
   type ShaderUniformsState,
   type VideoMode,
 } from './StateManager';
@@ -43,6 +44,7 @@ export interface SavedCalibration {
   };
   frames?: Partial<FrameState>;
   audio?: Partial<AudioState>;
+  interaction?: Partial<InteractionState>;
 }
 
 export class CalibrationManager {
@@ -114,6 +116,9 @@ export class CalibrationManager {
     }
     if (saved.audio) {
       store.setAudioState(saved.audio);
+    }
+    if (saved.interaction) {
+      store.patchInteraction(saved.interaction);
     }
   }
 
@@ -196,6 +201,16 @@ export class CalibrationManager {
       },
       frames: state.frames,
       audio: state.audio,
+      interaction: {
+        enabled: state.interaction.enabled,
+        holdDurationMs: state.interaction.holdDurationMs,
+        cooldownDurationSec: state.interaction.cooldownDurationSec,
+        zapEnabled: state.interaction.zapEnabled,
+        zapNavMode: state.interaction.zapNavMode,
+        zapHoldDurationMs: state.interaction.zapHoldDurationMs,
+        zapCooldownSec: state.interaction.zapCooldownSec,
+        zapVisualIntensity: state.interaction.zapVisualIntensity,
+      },
     };
   }
 
@@ -229,6 +244,7 @@ export class CalibrationManager {
       tracking: payload.tracking,
       videoMode: payload.videoMode,
       skeletonOverlay: payload.skeleton?.enabled,
+      interaction: payload.interaction,
     });
   }
 

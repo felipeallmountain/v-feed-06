@@ -198,6 +198,41 @@ export const DEFAULT_SCREEN_SUBTITLES = [
   'BOT-RIGHT',
 ];
 
+export const DEFAULT_FRAME_STATE: FrameState = {
+  show: true,
+  shapeStyle: 'crt-tube',
+  followTubeCurvature: true,
+  curvatureScale: 1.0,
+  cornerRadius: 0.08,
+  inset: 0.035,
+  thickness: 2.0,
+  opacity: 0.85,
+  showLabels: false,
+  showAntennaMetrics: true,
+  showQueryMessage: true,
+  screenQueryToggles: [true, true, true, true, true, true],
+  showLiveFeedBadge: true,
+  customQueryText: '',
+  showCrosshairs: true,
+  showCornerBrackets: true,
+  showPoseGuides: true,
+  poseGuideOpacity: 0.70,
+  poseGuideScale: 0.60,
+  poseGuideFigureThickness: 1.2,
+  poseGuideReticleThickness: 1.2,
+  poseGuideThickness: 1.2,
+  poseGuidePosition: 'bottom-right',
+  poseGuideOffsetX: 0.0,
+  poseGuideOffsetY: 0.0,
+  highlightActivePose: true,
+  rotation: 0,
+  offsetX: 0,
+  offsetY: 0,
+  screenTransforms: createDefaultFrameTransforms(),
+  customLabels: [...DEFAULT_SCREEN_LABELS],
+  customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
+};
+
 export interface AudioState {
   masterVolume: number;
   videoVolume: number;
@@ -256,6 +291,7 @@ export interface AppState {
   resetScreenFrameTransforms: () => void;
   setScreenCustomLabel: (index: number, title: string, subtitle?: string) => void;
   resetScreenLabels: () => void;
+  resetFrames: () => void;
   setAudioState: (partial: Partial<AudioState>) => void;
   setSkeletonStyle: (style: SkeletonStyle) => void;
   setSkeletonThickness: (thickness: number) => void;
@@ -663,6 +699,15 @@ export const useAppStore = createStore<AppState>((set) => ({
         customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
       },
     })),
+  resetFrames: () =>
+    set({
+      frames: {
+        ...DEFAULT_FRAME_STATE,
+        screenTransforms: createDefaultFrameTransforms(),
+        customLabels: [...DEFAULT_SCREEN_LABELS],
+        customSubtitles: [...DEFAULT_SCREEN_SUBTITLES],
+      },
+    }),
   setAudioState: (partial) =>
     set((s) => ({ audio: { ...s.audio, ...partial } })),
   setSkeletonStyle: (skeletonStyle) => set({ skeletonStyle }),

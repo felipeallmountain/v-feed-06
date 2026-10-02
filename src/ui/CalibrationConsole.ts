@@ -3,11 +3,15 @@ import {
   CRT_6X_PHYSICAL_PRESET,
   CRT_6X_TOTEM_PRESET,
   CRT_TUBE_SHADERS,
+  DEFAULT_SCREEN_LABELS,
   FLAT_DISPLAY_SHADERS,
   useAppStore,
   type AudioState,
   type FrameState,
+  type InteractionState,
+  type SkeletonStyle,
   type ShaderUniformsState,
+  type TrackingState,
   type VideoMode,
 } from '../core/StateManager';
 import { computeAllScreenCorners, MATRIX_QUADRANTS } from '../rendering/MatrixSplitter';
@@ -50,6 +54,7 @@ interface SavedCalibration {
   };
   frames?: Partial<FrameState>;
   audio?: Partial<AudioState>;
+  interaction?: Partial<InteractionState>;
 }
 
 export class CalibrationConsole {
@@ -66,29 +71,71 @@ export class CalibrationConsole {
     startV: number;
   } | null = null;
 
-  // Controllers for display updates
-  private fpsController: { fps: string } | null = null;
-  private distController: { dist: string } | null = null;
-  private peopleController: { people: string } | null = null;
+  // Persistent bindings for lil-gui controllers
+  private shaderBindings!: ShaderUniformsState;
+  private frameBindings!: FrameState;
+  private trackingBindings!: TrackingState;
+  private audioBindings!: AudioState;
+  private skeletonBindings!: {
+    enabled: boolean;
+    showLines: boolean;
+    lineThickness: number;
+    lineOpacity: number;
+    showDots: boolean;
+    dotSize: number;
+    dotOpacity: number;
+    jitter: number;
+    smoothing: number;
+    style: SkeletonStyle;
+  };
+  private videoBindings!: { mode: VideoMode };
+  private interactionBindings!: {
+    enabled: boolean;
+    holdSec: number;
+    cooldownSec: number;
+  };
+  private zapBindings!: {
+    zapEnabled: boolean;
+    zapNavMode: 'sequential' | 'directional' | 'random';
+    zapHoldSec: number;
+    zapCooldownSec: number;
+    zapVisualIntensity: number;
+  };
+
+  // Controllers & readouts for display updates
+  private fpsController = { fps: '0 FPS' };
+  private fpsCtrl: ReturnType<GUI['add']> | null = null;
+  private distReadout = { liveDistance: '0.00 m' };
+  private distCtrl: ReturnType<GUI['add']> | null = null;
+  private peopleReadout = { livePeople: '0 detected' };
+  private peopleCtrl: ReturnType<GUI['add']> | null = null;
   private curvatureCtrl: ReturnType<GUI['add']> | null = null;
-  private shaderBindings: ShaderUniformsState | null = null;
   private screenReadoutCtrls: Array<ReturnType<GUI['add']>> = [];
   private screenReadouts: Array<{ status: string }> = [];
-  private interactionReadouts: {
-    pose: string;
-    density: string;
-    kinetics: string;
-    chroma: string;
-    hold: string;
-    cooldown: string;
-    zapStatus: string;
-    quotaUsage: string;
-    quotaSaver: boolean;
-    lastQuery: string;
-  } | null = null;
-  private nowPlayingController: { title: string } | null = null;
-  private timeController: { time: string } | null = null;
-  private scrubController: { progress: number } | null = null;
+  private interactionReadouts = {
+    pose: 'NONE',
+    density: 'EMPTY',
+    kinetics: 'STEADY',
+    chroma: 'NEUTRAL',
+    hold: '0%',
+    cooldown: 'Ready',
+    zapStatus: 'Idle (Ready)',
+    quotaUsage: '0% (0.0k/9.0k)',
+    quotaSaver: false,
+    lastQuery: 'None',
+  };
+  private interactionControllers: Record<string, ReturnType<GUI['add']>> = {};
+  private nowPlayingController = { title: 'Connecting to main app...' };
+  private nowPlayingCtrl: ReturnType<GUI['add']> | null = null;
+  private videoQueryController = { query: 'Connecting to main app...' };
+  private videoQueryCtrl: ReturnType<GUI['add']> | null = null;
+  private queryFolderVideoQuery = { query: 'Detecting...' };
+  private queryFolderVideoQueryCtrl: ReturnType<GUI['add']> | null = null;
+  private timeController = { time: '0:00 / 0:00' };
+  private timeCtrl: ReturnType<GUI['add']> | null = null;
+  private scrubController = { progress: 0 };
+  private scrubCtrl: ReturnType<GUI['add']> | null = null;
+  private isScrubbing = false;
 
   // Corner Pinning sub-controllers
   private cornerState = {
@@ -142,11 +189,7 @@ export class CalibrationConsole {
   private debugOfflineMsg: HTMLElement | null = null;
   private debugGuiCtrl: ReturnType<GUI['add']> | null = null;
   private debugModeGuiCtrl: ReturnType<GUI['add']> | null = null;
-  private antennaMetricsDebugCtrl?: ReturnType<GUI['add']>;
-  private antennaMetricsFrameCtrl?: ReturnType<GUI['add']>;
   private screenTitleBindings: Array<{ title: string }> = [];
-  private videoQueryController: { query: string } | null = null;
-  private queryFolderVideoQuery: { query: string } | null = null;
   private screenQueryTogglesState = {
     crt1: true,
     crt2: true,
@@ -178,12 +221,54 @@ export class CalibrationConsole {
     if (!ctx) throw new Error('2D Canvas unsupported');
     this.ctx = ctx;
 
+    this.initBindings();
     this.initSync();
-    this.loadSaved();
     this.initDebugWindow();
     this.initGui(guiContainer);
+    this.loadSaved();
     this.initCanvasInteractions();
     this.startRenderLoop();
+  }
+
+  private initBindings(): void {
+    const store = useAppStore.getState();
+    this.shaderBindings = { ...store.shaders };
+    this.frameBindings = {
+      ...store.frames,
+      poseGuideFigureThickness: store.frames.poseGuideFigureThickness ?? store.frames.poseGuideThickness ?? 1.2,
+      poseGuideReticleThickness: store.frames.poseGuideReticleThickness ?? store.frames.poseGuideThickness ?? 1.2,
+      poseGuideOffsetX: store.frames.poseGuideOffsetX ?? 0.0,
+      poseGuideOffsetY: store.frames.poseGuideOffsetY ?? 0.0,
+    };
+    this.trackingBindings = { ...store.tracking };
+    this.audioBindings = { ...store.audio };
+    this.skeletonBindings = {
+      enabled: store.skeletonOverlay,
+      showLines: store.skeletonShowLines,
+      lineThickness: store.skeletonLineThickness,
+      lineOpacity: store.skeletonLineOpacity,
+      showDots: store.skeletonShowDots,
+      dotSize: store.skeletonDotSize,
+      dotOpacity: store.skeletonDotOpacity,
+      jitter: store.skeletonJitter,
+      smoothing: store.skeletonSmoothing,
+      style: store.skeletonStyle,
+    };
+    this.videoBindings = {
+      mode: store.videoMode,
+    };
+    this.interactionBindings = {
+      enabled: store.interaction?.enabled ?? true,
+      holdSec: (store.interaction?.holdDurationMs || 1800) / 1000,
+      cooldownSec: store.interaction?.cooldownDurationSec || 10,
+    };
+    this.zapBindings = {
+      zapEnabled: store.interaction?.zapEnabled ?? true,
+      zapNavMode: store.interaction?.zapNavMode ?? 'sequential',
+      zapHoldSec: (store.interaction?.zapHoldDurationMs ?? 1200) / 1000,
+      zapCooldownSec: store.interaction?.zapCooldownSec ?? 2.0,
+      zapVisualIntensity: store.interaction?.zapVisualIntensity ?? 1.0,
+    };
   }
 
   private initSync(): void {
@@ -207,12 +292,15 @@ export class CalibrationConsole {
   private applyTelemetry(t: TelemetryTickPayload): void {
     if (this.fpsController) {
       this.fpsController.fps = `${t.fps} FPS`;
+      this.fpsCtrl?.updateDisplay();
     }
-    if (this.distController) {
-      this.distController.dist = `${t.tracking.distance.toFixed(2)} m`;
+    if (this.distReadout) {
+      this.distReadout.liveDistance = `${t.tracking.distance.toFixed(2)} m`;
+      this.distCtrl?.updateDisplay();
     }
-    if (this.peopleController) {
-      this.peopleController.people = `${t.tracking.personCount} detected`;
+    if (this.peopleReadout) {
+      this.peopleReadout.livePeople = `${t.tracking.personCount} detected`;
+      this.peopleCtrl?.updateDisplay();
     }
     if (this.interactionReadouts) {
       const activeP = t.interaction.activePose;
@@ -236,9 +324,10 @@ export class CalibrationConsole {
           : 'Ready';
       if (t.interaction.zapActive) {
         const dir = (t.interaction.zapDirection ?? 'next').toUpperCase();
-        const scr = t.interaction.zapScreenIndex !== undefined && t.interaction.zapScreenIndex !== null
-          ? ` [CRT 0${t.interaction.zapScreenIndex + 1}]`
-          : '';
+        const scr =
+          t.interaction.zapScreenIndex !== undefined && t.interaction.zapScreenIndex !== null
+            ? ` [CRT 0${t.interaction.zapScreenIndex + 1}]`
+            : '';
         this.interactionReadouts.zapStatus = `⚡ ZAPPING ${dir}${scr}`;
       } else {
         this.interactionReadouts.zapStatus = 'Idle (Ready)';
@@ -248,29 +337,41 @@ export class CalibrationConsole {
         this.interactionReadouts.quotaUsage = `${t.quota.percentage}% (${(t.quota.unitsUsed / 1000).toFixed(1)}k/${(t.quota.dailyBudget / 1000).toFixed(1)}k)`;
         this.interactionReadouts.quotaSaver = t.quota.isProtectedMode;
       }
+      for (const ctrl of Object.values(this.interactionControllers)) {
+        ctrl?.updateDisplay();
+      }
     }
 
     if (t.video) {
       if (this.nowPlayingController) {
         this.nowPlayingController.title = t.video.title || 'Live Feed';
+        this.nowPlayingCtrl?.updateDisplay();
       }
       if (t.video.query) {
         useAppStore.getState().setCurrentVideoQuery(t.video.query);
         if (this.videoQueryController) {
           this.videoQueryController.query = t.video.query;
+          this.videoQueryCtrl?.updateDisplay();
         }
         if (this.queryFolderVideoQuery) {
           this.queryFolderVideoQuery.query = t.video.query;
+          this.queryFolderVideoQueryCtrl?.updateDisplay();
         }
-        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
       }
       if (this.timeController) {
         const cur = this.formatTime(t.video.currentTime);
         const dur = this.formatTime(t.video.duration);
         this.timeController.time = `${cur} / ${dur}`;
+        this.timeCtrl?.updateDisplay();
       }
       if (this.scrubController && t.video.duration > 0) {
-        this.scrubController.progress = (t.video.currentTime / t.video.duration) * 100;
+        const isInteractingWithScrub =
+          this.isScrubbing ||
+          Boolean(document.activeElement && this.scrubCtrl?.domElement?.contains(document.activeElement));
+        if (!isInteractingWithScrub) {
+          this.scrubController.progress = (t.video.currentTime / t.video.duration) * 100;
+          this.scrubCtrl?.updateDisplay();
+        }
       }
     }
 
@@ -331,9 +432,17 @@ export class CalibrationConsole {
 
   private applyIncomingStatePatch(patch: any): void {
     const store = useAppStore.getState();
-    if (patch.shaders) store.patchShaders(patch.shaders);
+    if (patch.shaders) {
+      store.patchShaders(patch.shaders);
+      if (this.shaderBindings) {
+        Object.assign(this.shaderBindings, useAppStore.getState().shaders);
+      }
+    }
     if (patch.frames) {
       store.setFrames(patch.frames);
+      if (this.frameBindings) {
+        Object.assign(this.frameBindings, useAppStore.getState().frames);
+      }
       if (this.screenTitleBindings.length && patch.frames.customLabels) {
         for (let i = 0; i < 6; i++) {
           if (patch.frames.customLabels[i] !== undefined) {
@@ -360,10 +469,41 @@ export class CalibrationConsole {
         }
       }
     }
-    if (patch.audio) store.setAudioState(patch.audio);
-    if (patch.tracking) store.patchTracking(patch.tracking);
-    if (patch.interaction) store.patchInteraction(patch.interaction);
-    if (patch.videoMode) store.setVideoMode(patch.videoMode);
+    if (patch.audio) {
+      store.setAudioState(patch.audio);
+      if (this.audioBindings) {
+        Object.assign(this.audioBindings, useAppStore.getState().audio);
+      }
+    }
+    if (patch.tracking) {
+      store.patchTracking(patch.tracking);
+      if (this.trackingBindings) {
+        Object.assign(this.trackingBindings, useAppStore.getState().tracking);
+      }
+    }
+    if (patch.interaction) {
+      store.patchInteraction(patch.interaction);
+      if (this.interactionBindings) {
+        const fresh = useAppStore.getState().interaction;
+        this.interactionBindings.enabled = fresh.enabled;
+        this.interactionBindings.holdSec = fresh.holdDurationMs / 1000;
+        this.interactionBindings.cooldownSec = fresh.cooldownDurationSec;
+      }
+      if (this.zapBindings) {
+        const fresh = useAppStore.getState().interaction;
+        this.zapBindings.zapEnabled = fresh.zapEnabled;
+        this.zapBindings.zapNavMode = fresh.zapNavMode;
+        this.zapBindings.zapHoldSec = fresh.zapHoldDurationMs / 1000;
+        this.zapBindings.zapCooldownSec = fresh.zapCooldownSec;
+        this.zapBindings.zapVisualIntensity = fresh.zapVisualIntensity;
+      }
+    }
+    if (patch.videoMode) {
+      store.setVideoMode(patch.videoMode);
+      if (this.videoBindings) {
+        this.videoBindings.mode = patch.videoMode;
+      }
+    }
     if (patch.skeletonOverlay !== undefined) store.setSkeletonOverlay(patch.skeletonOverlay);
     if (patch.skeletonStyle !== undefined) store.setSkeletonStyle(patch.skeletonStyle);
     if (patch.skeletonLineThickness !== undefined) store.setSkeletonLineThickness(patch.skeletonLineThickness);
@@ -374,6 +514,19 @@ export class CalibrationConsole {
     if (patch.skeletonShowDots !== undefined) store.setSkeletonShowDots(patch.skeletonShowDots);
     if (patch.skeletonJitter !== undefined) store.setSkeletonJitter(patch.skeletonJitter);
     if (patch.skeletonSmoothing !== undefined) store.setSkeletonSmoothing(patch.skeletonSmoothing);
+    if (this.skeletonBindings) {
+      const fresh = useAppStore.getState();
+      this.skeletonBindings.enabled = fresh.skeletonOverlay;
+      this.skeletonBindings.style = fresh.skeletonStyle;
+      this.skeletonBindings.lineThickness = fresh.skeletonLineThickness;
+      this.skeletonBindings.lineOpacity = fresh.skeletonLineOpacity;
+      this.skeletonBindings.dotSize = fresh.skeletonDotSize;
+      this.skeletonBindings.dotOpacity = fresh.skeletonDotOpacity;
+      this.skeletonBindings.showLines = fresh.skeletonShowLines;
+      this.skeletonBindings.showDots = fresh.skeletonShowDots;
+      this.skeletonBindings.jitter = fresh.skeletonJitter;
+      this.skeletonBindings.smoothing = fresh.skeletonSmoothing;
+    }
     if (patch.debugOverlay !== undefined) {
       store.setDebugOverlay(patch.debugOverlay);
       this.setDebugWindowVisible(patch.debugOverlay, false);
@@ -383,9 +536,7 @@ export class CalibrationConsole {
       this.updateDebugWindowFeedMode(patch.debugViewMode);
     }
 
-    if (this.shaderBindings) {
-      Object.assign(this.shaderBindings, useAppStore.getState().shaders);
-    }
+    this.curvatureCtrl?.enable(useAppStore.getState().shaders.tubeCurve);
     this.updateCornerControllers();
     this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
   }
@@ -409,10 +560,9 @@ export class CalibrationConsole {
     presets.add({ export: () => this.exportCalibrationJson() }, 'export').name('📥 Export File (.json)');
     presets.add({ import: () => this.importCalibrationJson() }, 'import').name('📤 Import File (.json)');
     presets.add({ copy: () => this.copyToClipboard() }, 'copy').name('📋 Copy JSON to Clipboard');
-    presets.add({ reset: () => this.applyPreset(CRT_6X_TOTEM_PRESET) }, 'reset').name('Reset defaults');
+    presets.add({ reset: () => this.factoryResetDefaults() }, 'reset').name('↺ Factory Reset All Defaults');
 
-    this.shaderBindings = { ...store.shaders };
-    const sh: ShaderUniformsState = this.shaderBindings;
+    const sh = this.shaderBindings;
 
     // --- 2. 2x3 MATRIX & BEZELS ---
     const matrixFolder = gui.addFolder('2×3 Matrix (6 Screens)');
@@ -463,7 +613,7 @@ export class CalibrationConsole {
 
     matrixFolder
       .add(sh, 'cornerRounding', 0, 0.2, 0.01)
-      .name('Tube Corner Radius')
+      .name('Tube Corner Radius (Shader)')
       .onChange((v: number) => {
         store.patchShaders({ cornerRounding: v });
         this.broadcastPatch({ shaders: { cornerRounding: v } });
@@ -490,13 +640,7 @@ export class CalibrationConsole {
 
     // --- 3. SCREEN FRAMES & OUTLINES ---
     const framesFolder = gui.addFolder('Screen Frames & TV Outlines');
-    const frm = {
-      ...store.frames,
-      poseGuideFigureThickness: store.frames.poseGuideFigureThickness ?? store.frames.poseGuideThickness ?? 1.2,
-      poseGuideReticleThickness: store.frames.poseGuideReticleThickness ?? store.frames.poseGuideThickness ?? 1.2,
-      poseGuideOffsetX: store.frames.poseGuideOffsetX ?? 0.0,
-      poseGuideOffsetY: store.frames.poseGuideOffsetY ?? 0.0,
-    };
+    const frm = this.frameBindings;
 
     framesFolder
       .add(frm, 'show')
@@ -542,7 +686,7 @@ export class CalibrationConsole {
 
     framesFolder
       .add(frm, 'cornerRadius', 0.0, 0.3, 0.01)
-      .name('Corner Rounding')
+      .name('Frame Corner Rounding (Overlay)')
       .onChange((v: number) => {
         store.setFrames({ cornerRadius: v });
         this.broadcastPatch({ frames: { cornerRadius: v } });
@@ -576,16 +720,13 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    this.antennaMetricsFrameCtrl = framesFolder
+    framesFolder
       .add(frm, 'showAntennaMetrics')
       .name('Antenna Metrics (ANT/N/Bar)')
       .onChange((v: boolean) => {
         store.setFrames({ showAntennaMetrics: v });
         this.broadcastPatch({ frames: { showAntennaMetrics: v } });
         this.persist();
-        if (this.antennaMetricsDebugCtrl && this.antennaMetricsDebugCtrl.getValue() !== v) {
-          this.antennaMetricsDebugCtrl.setValue(v);
-        }
       });
 
     // Screen Titles for Antenna Metrics (CRT 01 - 06)
@@ -668,9 +809,9 @@ export class CalibrationConsole {
     this.queryFolderVideoQuery = {
       query: this.latestTelemetry?.video?.query || store.currentVideoQuery || 'Detecting...',
     };
-    queryFolder
+    this.queryFolderVideoQueryCtrl = queryFolder
       .add(this.queryFolderVideoQuery, 'query')
-      .name('Actual Video Query')
+      .name('Active Video Query')
       .disable();
 
     queryFolder
@@ -862,6 +1003,57 @@ export class CalibrationConsole {
       '270° (Counter-CW)': 270,
     };
 
+    this.selectedScreenCtrl = cornerFolder
+      .add(this.cornerState, 'selectedScreen', screenMap)
+      .name('Select Screen')
+      .onChange((val: number) => {
+        this.selectedScreen = val;
+        this.updateCornerControllers();
+        document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach((btn) => {
+          btn.classList.toggle('active', btn.getAttribute('data-screen') === String(val));
+        });
+      });
+
+    cornerFolder
+      .add(
+        {
+          resetScreen: () => {
+            store.resetScreenCorners(this.cornerState.selectedScreen);
+            store.resetScreenOffset(this.cornerState.selectedScreen);
+            this.updateCornerControllers();
+            this.broadcastPatch({
+              shaders: {
+                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
+                screenOffsets: useAppStore.getState().shaders.screenOffsets,
+              },
+            });
+            this.persist();
+          },
+        },
+        'resetScreen',
+      )
+      .name('Reset active screen corners & offset');
+
+    cornerFolder
+      .add(
+        {
+          resetAll: () => {
+            store.resetAllCorners();
+            store.resetAllOffsets();
+            this.updateCornerControllers();
+            this.broadcastPatch({
+              shaders: {
+                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
+                screenOffsets: useAppStore.getState().shaders.screenOffsets,
+              },
+            });
+            this.persist();
+          },
+        },
+        'resetAll',
+      )
+      .name('Reset all 6 screens');
+
     this.showHandlesCtrl = cornerFolder
       .add(this.cornerState, 'showHandles')
       .name('Show Corner Target Guides')
@@ -996,57 +1188,6 @@ export class CalibrationConsole {
         this.broadcastPatch({ shaders: { cornerOffsets: useAppStore.getState().shaders.cornerOffsets } });
         this.persist();
       });
-
-    this.selectedScreenCtrl = cornerFolder
-      .add(this.cornerState, 'selectedScreen', screenMap)
-      .name('Select Screen')
-      .onChange((val: number) => {
-        this.selectedScreen = val;
-        this.updateCornerControllers();
-        document.querySelectorAll<HTMLButtonElement>('[data-screen]').forEach((btn) => {
-          btn.classList.toggle('active', btn.getAttribute('data-screen') === String(val));
-        });
-      });
-
-    cornerFolder
-      .add(
-        {
-          resetScreen: () => {
-            store.resetScreenCorners(this.cornerState.selectedScreen);
-            store.resetScreenOffset(this.cornerState.selectedScreen);
-            this.updateCornerControllers();
-            this.broadcastPatch({
-              shaders: {
-                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
-                screenOffsets: useAppStore.getState().shaders.screenOffsets,
-              },
-            });
-            this.persist();
-          },
-        },
-        'resetScreen',
-      )
-      .name('Reset active screen corners & offset');
-
-    cornerFolder
-      .add(
-        {
-          resetAll: () => {
-            store.resetAllCorners();
-            store.resetAllOffsets();
-            this.updateCornerControllers();
-            this.broadcastPatch({
-              shaders: {
-                cornerOffsets: useAppStore.getState().shaders.cornerOffsets,
-                screenOffsets: useAppStore.getState().shaders.screenOffsets,
-              },
-            });
-            this.persist();
-          },
-        },
-        'resetAll',
-      )
-      .name('Reset all 6 screens');
 
     this.updateCornerControllers();
 
@@ -1193,8 +1334,10 @@ export class CalibrationConsole {
 
     // --- 8. TRACKING & SENSITIVITY ---
     const tracking = gui.addFolder('Tracking & Sensitivity');
+    const trk = this.trackingBindings;
+
     tracking
-      .add(store.tracking, 'confidenceThreshold', 0.1, 0.9, 0.01)
+      .add(trk, 'confidenceThreshold', 0.1, 0.9, 0.01)
       .name('Confidence')
       .onChange((v: number) => {
         store.patchTracking({ confidenceThreshold: v });
@@ -1202,7 +1345,7 @@ export class CalibrationConsole {
         this.persist();
       });
     tracking
-      .add(store.tracking, 'mirrorCamera')
+      .add(trk, 'mirrorCamera')
       .name('Mirror camera')
       .onChange((v: boolean) => {
         store.patchTracking({ mirrorCamera: v });
@@ -1210,7 +1353,7 @@ export class CalibrationConsole {
         this.persist();
       });
     tracking
-      .add(store.tracking, 'cameraRotation', {
+      .add(trk, 'cameraRotation', {
         '0° (Standard Landscape)': 0,
         '90° (Vertical Clockwise)': 90,
         '180° (Inverted Landscape)': 180,
@@ -1234,20 +1377,18 @@ export class CalibrationConsole {
         this.persist();
       });
 
-    const distReadout = { liveDistance: `${store.tracking.distance.toFixed(2)} m` };
-    this.distController = tracking
-      .add(distReadout, 'liveDistance')
+    this.distCtrl = tracking
+      .add(this.distReadout, 'liveDistance')
       .name('Est. Distance')
-      .disable() as any;
+      .disable();
 
-    const peopleReadout = { livePeople: `${store.tracking.personCount} detected` };
-    this.peopleController = tracking
-      .add(peopleReadout, 'livePeople')
+    this.peopleCtrl = tracking
+      .add(this.peopleReadout, 'livePeople')
       .name('People In View')
-      .disable() as any;
+      .disable();
 
     tracking
-      .add(store.tracking, 'maxNumPoses', [1, 2, 3, 4, 6])
+      .add(trk, 'maxNumPoses', [1, 2, 3, 4, 6])
       .name('Max Detectable People')
       .onChange((v: any) => {
         store.patchTracking({ maxNumPoses: Number(v) });
@@ -1256,7 +1397,7 @@ export class CalibrationConsole {
       });
 
     tracking
-      .add(store.tracking, 'distanceScale', 1.0, 25.0, 0.5)
+      .add(trk, 'distanceScale', 1.0, 25.0, 0.5)
       .name('Dist sensitivity')
       .onChange((v: number) => {
         store.patchTracking({ distanceScale: v });
@@ -1265,7 +1406,7 @@ export class CalibrationConsole {
       });
 
     tracking
-      .add(store.tracking, 'distanceOffset', 1.0, 5.0, 0.1)
+      .add(trk, 'distanceOffset', 1.0, 5.0, 0.1)
       .name('Base dist offset')
       .onChange((v: number) => {
         store.patchTracking({ distanceOffset: v });
@@ -1274,7 +1415,7 @@ export class CalibrationConsole {
       });
 
     tracking
-      .add(store.tracking, 'minDistance', 0.5, 3.0, 0.1)
+      .add(trk, 'minDistance', 0.5, 3.0, 0.1)
       .name('Min dist (lock 100%)')
       .onChange((v: number) => {
         store.patchTracking({ minDistance: v });
@@ -1283,7 +1424,7 @@ export class CalibrationConsole {
       });
 
     tracking
-      .add(store.tracking, 'maxDistance', 1.5, 6.0, 0.1)
+      .add(trk, 'maxDistance', 1.5, 6.0, 0.1)
       .name('Max dist (fade 0%)')
       .onChange((v: number) => {
         store.patchTracking({ maxDistance: v });
@@ -1294,7 +1435,7 @@ export class CalibrationConsole {
     // --- 9. HUMAN ANTENNA RECEPTION ---
     const antennaFolder = gui.addFolder('Human Antenna & Presence (6 Pieces)');
     antennaFolder
-      .add(store.tracking, 'antennaLocalWeight', 0.0, 1.0, 0.05)
+      .add(trk, 'antennaLocalWeight', 0.0, 1.0, 0.05)
       .name('Local vs Global Weight')
       .onChange((v: number) => {
         store.patchTracking({ antennaLocalWeight: v });
@@ -1303,7 +1444,7 @@ export class CalibrationConsole {
       });
 
     antennaFolder
-      .add(store.tracking, 'antennaHandBoost', 0.5, 3.0, 0.1)
+      .add(trk, 'antennaHandBoost', 0.5, 3.0, 0.1)
       .name('Hand Antenna Boost')
       .onChange((v: number) => {
         store.patchTracking({ antennaHandBoost: v });
@@ -1312,7 +1453,7 @@ export class CalibrationConsole {
       });
 
     antennaFolder
-      .add(store.tracking, 'antennaFalloffRadius', 0.2, 1.0, 0.05)
+      .add(trk, 'antennaFalloffRadius', 0.2, 1.0, 0.05)
       .name('Antenna Field Radius')
       .onChange((v: number) => {
         store.patchTracking({ antennaFalloffRadius: v });
@@ -1321,7 +1462,7 @@ export class CalibrationConsole {
       });
 
     antennaFolder
-      .add(store.tracking, 'antennaSmoothing', 0.02, 0.5, 0.01)
+      .add(trk, 'antennaSmoothing', 0.02, 0.5, 0.01)
       .name('Response Smoothing')
       .onChange((v: number) => {
         store.patchTracking({ antennaSmoothing: v });
@@ -1346,63 +1487,49 @@ export class CalibrationConsole {
 
     // --- 10. INTERACTION & QUERY SYNTHESIS ---
     const interFolder = gui.addFolder('Interaction & Query Synthesis');
-    const interSettings = {
-      enabled: store.interaction?.enabled ?? true,
-      holdSec: (store.interaction?.holdDurationMs || 1800) / 1000,
-      cooldownSec: store.interaction?.cooldownDurationSec || 10,
-    };
+    const inter = this.interactionBindings;
 
     interFolder
-      .add(interSettings, 'enabled')
+      .add(inter, 'enabled')
       .name('Enable Auto Query Sync')
       .onChange((v: boolean) => {
         store.setInteractionEnabled(v);
         this.broadcastPatch({ interaction: { enabled: v } });
+        this.persist();
       });
 
     interFolder
-      .add(interSettings, 'holdSec', 0.8, 3.5, 0.1)
+      .add(inter, 'holdSec', 0.8, 3.5, 0.1)
       .name('Hold Debounce (s)')
       .onChange((v: number) => {
         store.patchInteraction({ holdDurationMs: Math.round(v * 1000) });
         this.broadcastPatch({ interaction: { holdDurationMs: Math.round(v * 1000) } });
+        this.persist();
       });
 
     interFolder
-      .add(interSettings, 'cooldownSec', 5, 30, 1)
+      .add(inter, 'cooldownSec', 5, 30, 1)
       .name('Cooldown Lock (s)')
       .onChange((v: number) => {
         store.patchInteraction({ cooldownDurationSec: v });
         this.broadcastPatch({ interaction: { cooldownDurationSec: v } });
+        this.persist();
       });
 
-    this.interactionReadouts = {
-      pose: 'NONE',
-      density: 'EMPTY',
-      kinetics: 'STEADY',
-      chroma: 'NEUTRAL',
-      hold: '0%',
-      cooldown: 'Ready',
-      zapStatus: 'Idle (Ready)',
-      quotaUsage: '0% (0.0k/9.0k)',
-      quotaSaver: store.quota?.isProtectedMode ?? false,
-      lastQuery: 'None',
-    };
-
-    interFolder.add(this.interactionReadouts, 'pose').name('Active Pose').disable();
-    interFolder.add(this.interactionReadouts, 'density').name('Audience Density').disable();
-    interFolder.add(this.interactionReadouts, 'kinetics').name('Kinetic Dynamics').disable();
-    interFolder.add(this.interactionReadouts, 'chroma').name('Clothing Chroma').disable();
-    interFolder.add(this.interactionReadouts, 'hold').name('Hold Progress').disable();
-    interFolder.add(this.interactionReadouts, 'cooldown').name('Cooldown Lock').disable();
-    interFolder.add(this.interactionReadouts, 'quotaUsage').name('YouTube Quota').disable();
-    interFolder
+    this.interactionControllers.pose = interFolder.add(this.interactionReadouts, 'pose').name('Active Pose').disable();
+    this.interactionControllers.density = interFolder.add(this.interactionReadouts, 'density').name('Audience Density').disable();
+    this.interactionControllers.kinetics = interFolder.add(this.interactionReadouts, 'kinetics').name('Kinetic Dynamics').disable();
+    this.interactionControllers.chroma = interFolder.add(this.interactionReadouts, 'chroma').name('Clothing Chroma').disable();
+    this.interactionControllers.hold = interFolder.add(this.interactionReadouts, 'hold').name('Hold Progress').disable();
+    this.interactionControllers.cooldown = interFolder.add(this.interactionReadouts, 'cooldown').name('Cooldown Status').disable();
+    this.interactionControllers.quotaUsage = interFolder.add(this.interactionReadouts, 'quotaUsage').name('YouTube Quota').disable();
+    this.interactionControllers.quotaSaver = interFolder
       .add(this.interactionReadouts, 'quotaSaver')
       .name('Quota Saver (Local First)')
       .onChange((v: boolean) => {
         syncChannel.sendCommand('toggle_quota_protection', v);
       });
-    interFolder.add(this.interactionReadouts, 'lastQuery').name('Last Query').disable();
+    this.interactionControllers.lastQuery = interFolder.add(this.interactionReadouts, 'lastQuery').name('Last Query').disable();
     interFolder
       .add(
         {
@@ -1418,92 +1545,91 @@ export class CalibrationConsole {
     // --- POSE ZAPPING & CHANNEL SWITCHING (6 TVs) ---
     const zapFolder = interFolder.addFolder('Pose Zapping & Channel Surfing (6 TVs)');
     zapFolder.open();
-
-    const zapSettings = {
-      zapEnabled: store.interaction?.zapEnabled ?? true,
-      zapNavMode: store.interaction?.zapNavMode ?? 'sequential',
-      zapHoldSec: (store.interaction?.zapHoldDurationMs ?? 1200) / 1000,
-      zapCooldownSec: store.interaction?.zapCooldownSec ?? 2.0,
-      zapVisualIntensity: store.interaction?.zapVisualIntensity ?? 1.0,
-      testZapRandom: () => {
-        syncChannel.sendCommand('zap_random');
-        this.showToast('⚡ ZAP RANDOM Triggered (Any Pose) — New Random Video');
-      },
-      testZapPrev: () => {
-        syncChannel.sendCommand('zap_prev');
-        this.showToast('⚡ ZAP PREV Triggered (CRT 1, 3, 5) — Previous Video');
-      },
-      testZapNext: () => {
-        syncChannel.sendCommand('zap_next');
-        this.showToast('⚡ ZAP NEXT Triggered (CRT 2, 4, 6) — Next Video');
-      },
-    };
+    const zap = this.zapBindings;
 
     zapFolder
-      .add(zapSettings, 'zapEnabled')
+      .add(zap, 'zapEnabled')
       .name('Enable Pose Zapping')
       .onChange((v: boolean) => {
         store.patchInteraction({ zapEnabled: v });
         this.broadcastPatch({ interaction: { zapEnabled: v } });
+        this.persist();
       });
 
     zapFolder
-      .add(zapSettings, 'zapNavMode', ['sequential', 'directional', 'random'])
+      .add(zap, 'zapNavMode', ['sequential', 'directional', 'random'])
       .name('Zap Nav Mode')
       .onChange((v: 'sequential' | 'directional' | 'random') => {
         store.patchInteraction({ zapNavMode: v });
         this.broadcastPatch({ interaction: { zapNavMode: v } });
+        this.persist();
       });
 
     zapFolder
-      .add(zapSettings, 'zapHoldSec', 0.4, 3.0, 0.1)
+      .add(zap, 'zapHoldSec', 0.4, 3.0, 0.1)
       .name('Zap Hold Time (s)')
       .onChange((v: number) => {
         const ms = Math.round(v * 1000);
         store.patchInteraction({ zapHoldDurationMs: ms });
         this.broadcastPatch({ interaction: { zapHoldDurationMs: ms } });
+        this.persist();
       });
 
     zapFolder
-      .add(zapSettings, 'zapCooldownSec', 1.0, 10.0, 0.5)
+      .add(zap, 'zapCooldownSec', 1.0, 10.0, 0.5)
       .name('Zap Cooldown (s)')
       .onChange((v: number) => {
         store.patchInteraction({ zapCooldownSec: v });
         this.broadcastPatch({ interaction: { zapCooldownSec: v } });
+        this.persist();
       });
 
     zapFolder
-      .add(zapSettings, 'zapVisualIntensity', 0.2, 2.0, 0.1)
+      .add(zap, 'zapVisualIntensity', 0.2, 2.0, 0.1)
       .name('Lightning Intensity')
       .onChange((v: number) => {
         store.patchInteraction({ zapVisualIntensity: v });
         this.broadcastPatch({ interaction: { zapVisualIntensity: v } });
+        this.persist();
       });
 
-    zapFolder.add(this.interactionReadouts, 'zapStatus').name('Zap State').disable();
-    zapFolder.add(zapSettings, 'testZapRandom').name('⚡ Test Random Zap (Any Pose)');
-    zapFolder.add(zapSettings, 'testZapPrev').name('⚡ Test Zap Prev (CRT 1,3,5)');
-    zapFolder.add(zapSettings, 'testZapNext').name('⚡ Test Zap Next (CRT 2,4,6)');
+    this.interactionControllers.zapStatus = zapFolder.add(this.interactionReadouts, 'zapStatus').name('Zap State').disable();
+    zapFolder.add({
+      testZapRandom: () => {
+        syncChannel.sendCommand('zap_random');
+        this.showToast('⚡ ZAP RANDOM Triggered (Any Pose) — New Random Video');
+      },
+    }, 'testZapRandom').name('⚡ Test Random Zap (Any Pose)');
+    zapFolder.add({
+      testZapPrev: () => {
+        syncChannel.sendCommand('zap_prev');
+        this.showToast('⚡ ZAP PREV Triggered (CRT 1, 3, 5) — Previous Video');
+      },
+    }, 'testZapPrev').name('⚡ Test Zap Prev (CRT 1,3,5)');
+    zapFolder.add({
+      testZapNext: () => {
+        syncChannel.sendCommand('zap_next');
+        this.showToast('⚡ ZAP NEXT Triggered (CRT 2, 4, 6) — Next Video');
+      },
+    }, 'testZapNext').name('⚡ Test Zap Next (CRT 2,4,6)');
 
     // --- 11. VIDEO & INGESTION ---
     const video = gui.addFolder('Video & Ingestion');
-    this.nowPlayingController = { title: 'Connecting to main app...' };
-    video.add(this.nowPlayingController, 'title').name('Now Playing').disable();
+    this.nowPlayingCtrl = video.add(this.nowPlayingController, 'title').name('Now Playing').disable();
+    this.videoQueryCtrl = video.add(this.videoQueryController, 'query').name('Current Video Query').disable();
+    this.timeCtrl = video.add(this.timeController, 'time').name('Time / Duration').disable();
 
-    this.videoQueryController = { query: 'Connecting to main app...' };
-    video.add(this.videoQueryController, 'query').name('Current Video Query').disable();
-
-    this.timeController = { time: '0:00 / 0:00' };
-    video.add(this.timeController, 'time').name('Time / Duration').disable();
-
-    this.scrubController = { progress: 0 };
-    const scrubCtrl = video.add(this.scrubController, 'progress', 0, 100, 0.5).name('Seek (%)');
-    scrubCtrl.onFinishChange((v: number) => {
+    this.scrubCtrl = video.add(this.scrubController, 'progress', 0, 100, 0.5).name('Seek (%)');
+    this.scrubCtrl.onChange(() => {
+      this.isScrubbing = true;
+    });
+    this.scrubCtrl.onFinishChange((v: number) => {
+      this.isScrubbing = false;
       syncChannel.sendCommand('seek', v);
     });
 
-    const videoState = {
-      mode: store.videoMode as VideoMode,
+    const vid = this.videoBindings;
+    const videoActions = {
       togglePlay: () => syncChannel.sendCommand('toggle_play'),
       next: () => syncChannel.sendCommand('next'),
       prev: () => syncChannel.sendCommand('prev'),
@@ -1514,7 +1640,7 @@ export class CalibrationConsole {
     };
 
     video
-      .add(videoState, 'mode', ['live', 'cache', 'grid'] as VideoMode[])
+      .add(vid, 'mode', ['live', 'cache', 'grid'] as VideoMode[])
       .name('Playback Mode')
       .onChange((m: VideoMode) => {
         store.setVideoMode(m);
@@ -1523,14 +1649,14 @@ export class CalibrationConsole {
         localStorage.setItem('vfeed-video-mode', m);
         this.persist();
       });
-    video.add(videoState, 'togglePlay').name('⏯ Play / Pause');
-    video.add(videoState, 'next').name('⏭ Next Video');
-    video.add(videoState, 'prev').name('⏮ Prev Video');
-    video.add(videoState, 'syncYouTube').name('↓ Sync YouTube Now');
+    video.add(videoActions, 'togglePlay').name('⏯ Play / Pause');
+    video.add(videoActions, 'next').name('⏭ Next Video');
+    video.add(videoActions, 'prev').name('⏮ Prev Video');
+    video.add(videoActions, 'syncYouTube').name('↓ Sync YouTube Now');
 
     // --- 12. AUDIO & ANTENNA SOUND ---
     const audioFolder = gui.addFolder('Audio & Synth Hum');
-    const aud = { ...store.audio };
+    const aud = this.audioBindings;
 
     audioFolder
       .add(aud, 'masterVolume', 0, 1, 0.05)
@@ -1588,18 +1714,7 @@ export class CalibrationConsole {
 
     // --- 13. SKELETON OVERLAY ---
     const skel = gui.addFolder('Skeleton Overlay');
-    const skelState = {
-      enabled: store.skeletonOverlay,
-      showLines: store.skeletonShowLines,
-      lineThickness: store.skeletonLineThickness,
-      lineOpacity: store.skeletonLineOpacity,
-      showDots: store.skeletonShowDots,
-      dotSize: store.skeletonDotSize,
-      dotOpacity: store.skeletonDotOpacity,
-      jitter: store.skeletonJitter,
-      smoothing: store.skeletonSmoothing,
-      style: store.skeletonStyle,
-    };
+    const skelState = this.skeletonBindings;
 
     skel
       .add(skelState, 'enabled')
@@ -1693,8 +1808,7 @@ export class CalibrationConsole {
 
     // --- 14. DEBUG & TELEMETRY ---
     const debug = gui.addFolder('Performance & Stage Debug');
-    this.fpsController = { fps: `${store.fps} FPS` };
-    debug.add(this.fpsController, 'fps').name('Frame rate').disable();
+    this.fpsCtrl = debug.add(this.fpsController, 'fps').name('Frame rate').disable();
     this.dbgState = {
       debugOverlay: store.debugOverlay,
       debugViewMode: store.debugViewMode || 'video',
@@ -1714,113 +1828,10 @@ export class CalibrationConsole {
         this.broadcastPatch({ debugViewMode: m });
       });
 
-    const antennaMetricsObj = {
-      showAntennaMetrics: store.frames.showAntennaMetrics,
-    };
-    this.antennaMetricsDebugCtrl = debug
-      .add(antennaMetricsObj, 'showAntennaMetrics')
-      .name('Stage Antenna Metrics (ANT/N/Bar)')
-      .onChange((v: boolean) => {
-        store.setFrames({ showAntennaMetrics: v });
-        this.broadcastPatch({ frames: { showAntennaMetrics: v } });
-        this.persist();
-        if (this.antennaMetricsFrameCtrl && this.antennaMetricsFrameCtrl.getValue() !== v) {
-          this.antennaMetricsFrameCtrl.setValue(v);
-        }
-      });
-
-    const debugTitlesFolder = debug.addFolder('Antenna Screen Titles (CRT 01 - 06)');
-    debugTitlesFolder.close();
-    for (let i = 0; i < 6; i++) {
-      debugTitlesFolder
-        .add(this.screenTitleBindings[i], 'title')
-        .name(`CRT [0${i + 1}] (${screenPosNames[i]})`)
-        .onChange((v: string) => {
-          store.setScreenCustomLabel(i, v);
-          this.broadcastPatch({ frames: useAppStore.getState().frames });
-          this.persist();
-          this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-        });
-    }
-
-    const debugQueryFolder = debug.addFolder('Bottom Query Message (CRT 01 - 06)');
-    debugQueryFolder.close();
-    debugQueryFolder
-      .add(this.queryState, 'showQueryMessage')
-      .name('Enable Query Messages')
-      .onChange((v: boolean) => {
-        store.setFrames({ showQueryMessage: v });
-        this.broadcastPatch({ frames: { showQueryMessage: v } });
-        this.persist();
-        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-      });
-
-    debugQueryFolder
-      .add(this.queryState, 'showLiveFeedBadge')
-      .name('Show LIVE FEED Tag')
-      .onChange((v: boolean) => {
-        store.setFrames({ showLiveFeedBadge: v });
-        this.broadcastPatch({ frames: { showLiveFeedBadge: v } });
-        this.persist();
-        this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
-      });
-
-    debugQueryFolder
-      .add(this.queryState, 'customQueryText')
-      .name('Custom Query Override')
-      .onChange((v: string) => {
-        store.setFrames({ customQueryText: v });
-        this.broadcastPatch({ frames: { customQueryText: v } });
-        this.persist();
-      });
-
-    // 6 Direct Per-Screen Visibility Toggles
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt1')
-      .name(`CRT [01] (${screenPosNames[0]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt2')
-      .name(`CRT [02] (${screenPosNames[1]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt3')
-      .name(`CRT [03] (${screenPosNames[2]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt4')
-      .name(`CRT [04] (${screenPosNames[3]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt5')
-      .name(`CRT [05] (${screenPosNames[4]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-    debugQueryFolder
-      .add(this.screenQueryTogglesState, 'crt6')
-      .name(`CRT [06] (${screenPosNames[5]})`)
-      .onChange(() => this.syncScreenQueryToggles());
-
-    debugQueryFolder
-      .add(
-        {
-          enableAll: () => this.setAllScreenQueries(true),
-        },
-        'enableAll',
-      )
-      .name('Enable All Screens');
-
-    debugQueryFolder
-      .add(
-        {
-          disableAll: () => this.setAllScreenQueries(false),
-        },
-        'disableAll',
-      )
-      .name('Disable All Screens');
-
     this.unsubscribeStore = useAppStore.subscribe((state) => {
       if (this.fpsController) {
         this.fpsController.fps = `${state.fps} FPS`;
+        this.fpsCtrl?.updateDisplay();
       }
     });
   }
@@ -2401,10 +2412,16 @@ export class CalibrationConsole {
     }
     if (saved.tracking) {
       store.patchTracking(saved.tracking);
+      if (this.trackingBindings) {
+        Object.assign(this.trackingBindings, useAppStore.getState().tracking);
+      }
     }
     if (saved.videoMode) {
       store.setVideoMode(saved.videoMode);
       localStorage.setItem('vfeed-video-mode', saved.videoMode);
+      if (this.videoBindings) {
+        this.videoBindings.mode = saved.videoMode;
+      }
     }
     if (saved.skeleton) {
       store.setSkeletonOverlay(saved.skeleton.enabled);
@@ -2435,9 +2452,25 @@ export class CalibrationConsole {
       if (saved.skeleton.smoothing !== undefined) {
         store.setSkeletonSmoothing(saved.skeleton.smoothing);
       }
+      if (this.skeletonBindings) {
+        const fresh = useAppStore.getState();
+        this.skeletonBindings.enabled = fresh.skeletonOverlay;
+        this.skeletonBindings.style = fresh.skeletonStyle;
+        this.skeletonBindings.lineThickness = fresh.skeletonLineThickness;
+        this.skeletonBindings.lineOpacity = fresh.skeletonLineOpacity;
+        this.skeletonBindings.dotSize = fresh.skeletonDotSize;
+        this.skeletonBindings.dotOpacity = fresh.skeletonDotOpacity;
+        this.skeletonBindings.showLines = fresh.skeletonShowLines;
+        this.skeletonBindings.showDots = fresh.skeletonShowDots;
+        this.skeletonBindings.jitter = fresh.skeletonJitter;
+        this.skeletonBindings.smoothing = fresh.skeletonSmoothing;
+      }
     }
     if (saved.frames) {
       store.setFrames(saved.frames);
+      if (this.frameBindings) {
+        Object.assign(this.frameBindings, useAppStore.getState().frames);
+      }
       if (this.screenTitleBindings.length && saved.frames.customLabels) {
         for (let i = 0; i < 6; i++) {
           if (saved.frames.customLabels[i] !== undefined) {
@@ -2466,6 +2499,24 @@ export class CalibrationConsole {
     }
     if (saved.audio) {
       store.setAudioState(saved.audio);
+      if (this.audioBindings) {
+        Object.assign(this.audioBindings, useAppStore.getState().audio);
+      }
+    }
+    if (saved.interaction) {
+      store.patchInteraction(saved.interaction);
+      if (this.interactionBindings) {
+        if (saved.interaction.enabled !== undefined) this.interactionBindings.enabled = saved.interaction.enabled;
+        if (saved.interaction.holdDurationMs !== undefined) this.interactionBindings.holdSec = saved.interaction.holdDurationMs / 1000;
+        if (saved.interaction.cooldownDurationSec !== undefined) this.interactionBindings.cooldownSec = saved.interaction.cooldownDurationSec;
+      }
+      if (this.zapBindings) {
+        if (saved.interaction.zapEnabled !== undefined) this.zapBindings.zapEnabled = saved.interaction.zapEnabled;
+        if (saved.interaction.zapNavMode !== undefined) this.zapBindings.zapNavMode = saved.interaction.zapNavMode;
+        if (saved.interaction.zapHoldDurationMs !== undefined) this.zapBindings.zapHoldSec = saved.interaction.zapHoldDurationMs / 1000;
+        if (saved.interaction.zapCooldownSec !== undefined) this.zapBindings.zapCooldownSec = saved.interaction.zapCooldownSec;
+        if (saved.interaction.zapVisualIntensity !== undefined) this.zapBindings.zapVisualIntensity = saved.interaction.zapVisualIntensity;
+      }
     }
     this.curvatureCtrl?.enable(store.shaders.tubeCurve);
     this.updateCornerControllers();
@@ -2530,6 +2581,16 @@ export class CalibrationConsole {
       },
       frames: state.frames,
       audio: state.audio,
+      interaction: {
+        enabled: state.interaction?.enabled ?? true,
+        holdDurationMs: state.interaction?.holdDurationMs ?? 1800,
+        cooldownDurationSec: state.interaction?.cooldownDurationSec ?? 10,
+        zapEnabled: state.interaction?.zapEnabled ?? true,
+        zapNavMode: state.interaction?.zapNavMode ?? 'sequential',
+        zapHoldDurationMs: state.interaction?.zapHoldDurationMs ?? 1200,
+        zapCooldownSec: state.interaction?.zapCooldownSec ?? 2.0,
+        zapVisualIntensity: state.interaction?.zapVisualIntensity ?? 1.0,
+      },
     };
   }
 
@@ -2565,6 +2626,119 @@ export class CalibrationConsole {
     }
   }
 
+  async factoryResetDefaults(): Promise<void> {
+    const store = useAppStore.getState();
+
+    // 1. Reset Shaders to 6x Totem preset & clear all matrix distortions
+    store.patchShaders({
+      ...CRT_6X_TOTEM_PRESET,
+      rippleStrength: store.shaders.rippleStrength,
+      showCornerHandles: true,
+    });
+    store.resetAllCorners();
+    store.resetAllOffsets();
+    for (let i = 0; i < 6; i++) {
+      store.setScreenRotation(i, 0);
+      store.setScreenFineRotation(i, 0);
+      store.setScreenFlip(i, 'h', false);
+      store.setScreenFlip(i, 'v', false);
+    }
+    store.setGlobalRotation(0);
+    store.setGlobalFineRotation(0);
+    store.setGlobalOffset('x', 0);
+    store.setGlobalOffset('y', 0);
+    store.setGlobalFlip('h', false);
+    store.setGlobalFlip('v', false);
+
+    // 2. Reset Frames & Titles
+    store.resetFrames();
+    store.resetScreenLabels();
+    for (let i = 0; i < 6; i++) {
+      if (this.screenTitleBindings[i]) {
+        this.screenTitleBindings[i].title = DEFAULT_SCREEN_LABELS[i] || `CRT [0${i + 1}]`;
+      }
+    }
+    this.queryState.showQueryMessage = true;
+    this.queryState.showLiveFeedBadge = true;
+    this.queryState.customQueryText = '';
+    for (let i = 0; i < 6; i++) {
+      this.queryState.screenQueryToggles[i] = true;
+      (this.screenQueryTogglesState as any)[`crt${i + 1}`] = true;
+    }
+
+    // 3. Reset Tracking
+    store.patchTracking({
+      confidenceThreshold: 0.4,
+      mirrorCamera: true,
+      cameraRotation: 0,
+      distanceScale: 8.0,
+      distanceOffset: 2.5,
+      minDistance: 1.0,
+      maxDistance: 3.5,
+      maxNumPoses: 4,
+      antennaLocalWeight: 0.6,
+      antennaHandBoost: 1.8,
+      antennaSmoothing: 0.12,
+      antennaFalloffRadius: 0.45,
+    });
+
+    // 4. Reset Interaction & Zapping
+    store.patchInteraction({
+      enabled: true,
+      holdDurationMs: 1800,
+      cooldownDurationSec: 10,
+      zapEnabled: true,
+      zapNavMode: 'sequential',
+      zapHoldDurationMs: 1200,
+      zapCooldownSec: 2.0,
+      zapVisualIntensity: 1.0,
+    });
+
+    // 5. Reset Video & Audio
+    store.setVideoMode('live');
+    store.setAudioState({
+      masterVolume: 0.8,
+      videoVolume: 0.7,
+      antennaModulation: true,
+      noiseVolume: 0.25,
+      humVolume: 0.02,
+      muted: false,
+    });
+
+    // 6. Reset Skeleton
+    store.setSkeletonOverlay(true);
+    store.setSkeletonStyle('phosphor');
+    store.setSkeletonLineThickness(2);
+    store.setSkeletonLineOpacity(0.85);
+    store.setSkeletonDotSize(4);
+    store.setSkeletonDotOpacity(0.9);
+    store.setSkeletonShowLines(true);
+    store.setSkeletonShowDots(true);
+    store.setSkeletonJitter(0.15);
+    store.setSkeletonSmoothing(0.65);
+
+    // 7. Clear browser local storage keys
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('vfeed-video-mode');
+    } catch {
+      /* ignore */
+    }
+
+    // 8. Synchronize all persistent binding objects
+    this.initBindings();
+
+    // 9. Update UI displays
+    this.curvatureCtrl?.enable(useAppStore.getState().shaders.tubeCurve);
+    this.updateCornerControllers();
+    this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+
+    // 10. Broadcast fresh state to stage & persist
+    this.broadcastPatch(this.getCalibrationPayload());
+    await this.saveToBrowserAndServer();
+    this.showToast('↺ Factory reset all calibration to default totem state');
+  }
+
   exportCalibrationJson(): void {
     const payload = this.getCalibrationPayload();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -2596,6 +2770,7 @@ export class CalibrationConsole {
           audio: data.audio,
           tracking: data.tracking,
           videoMode: data.videoMode,
+          interaction: data.interaction,
         });
         await this.saveToBrowserAndServer();
         this.showToast('✓ Imported & Saved calibration successfully');
