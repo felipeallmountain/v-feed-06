@@ -25,13 +25,13 @@ To solve this, V-FEED [06] implements a **Dual-Screen Architecture**:
                       └───────────────────────►◄────────────────────────┘
 ```
 
-Operators connect their laptop or tablet to the same local network or use a secondary monitor, opening `/calibration.html`. Any slider moved or corner dragged on the console updates the Main Stage canvas **in real time (< 1 ms)** via [`SyncChannel.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/SyncChannel.ts#L109).
+Operators connect their laptop or tablet to the same local network or use a secondary monitor, opening `/calibration.html`. Any slider moved or corner dragged on the console updates the Main Stage canvas **in real time (< 1 ms)** via [`SyncChannel.ts`](../../src/core/SyncChannel.ts#L116).
 
 ---
 
 ## 2. Standalone Operator Console (`calibration.html` & `CalibrationConsole.ts`)
 
-Located in [`calibration.html`](file:///Users/mclovin/Documents/pabellon/v-feed-06/calibration.html) and implemented in [`src/ui/CalibrationConsole.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/ui/CalibrationConsole.ts), the console provides an interactive control environment:
+Located in [`calibration.html`](../../calibration.html) and implemented in [`src/ui/CalibrationConsole.ts`](../../src/ui/CalibrationConsole.ts), the console provides an interactive control environment:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -64,8 +64,8 @@ Located in [`calibration.html`](file:///Users/mclovin/Documents/pabellon/v-feed-
 ### 2.1 Interactive 24-Point Corner Dragging
 Every physical CRT exhibits unique trapezoidal and analog raster distortion. The console canvas renders 24 draggable handles (4 corners per screen × 6 screens).
 - Clicking and dragging a handle updates `cornerOffsets` in real time.
-- The new vertex quad coordinates are immediately dispatched via [`syncChannel.sendStatePatch()`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/SyncChannel.ts#L123).
-- The Main Stage GPU recalculates [`invBilinear()`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CompositeShader.ts#L63) on every pixel in the subsequent frame, warping the video to perfectly match the physical CRT glass.
+- The new vertex quad coordinates are immediately dispatched via [`syncChannel.sendStatePatch()`](../../src/core/SyncChannel.ts#L236).
+- The Main Stage GPU recalculates [`invBilinear()`](../../src/rendering/shaders/CompositeShader.ts#L63) on every pixel in the subsequent frame, warping the video to perfectly match the physical CRT glass.
 
 ### 2.2 Independent Screen Rotation & Flips
 Depending on rack mounting (e.g. CRTs mounted upside down for cable routing, or rotated 90° vertically):
@@ -84,12 +84,12 @@ The console can override video playback with precision test patterns:
 
 ## 3. Installation Display Presets
 
-To ensure fast setup across different exhibition venues, [`CalibrationManager`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/core/CalibrationManager.ts#L46) stores four factory presets:
+To ensure fast setup across different exhibition venues, preset configurations are defined in [`StateManager.ts`](../../src/core/StateManager.ts#L343) and applied via [`CalibrationConsole.ts`](../../src/ui/CalibrationConsole.ts#L402) and [`CalibrationManager`](../../src/core/CalibrationManager.ts#L48):
 
 | Preset Name | Target Deployment | Configuration Highlights |
 | :--- | :--- | :--- |
-| **`6x CRT Totem (Wall)`** | Physical 2×3 CRT totem rack | `matrixSplit: true`, `bezelChassis: true`, `bezelComp: 0.65`, `perScreenVariance: 0.35`, individual tube curvature enabled. |
-| **`6x Physical Output`** | Hardware video wall splitter handling physical bezels externally | `matrixSplit: true`, `bezelWidthX: 0`, `bezelWidthY: 0`, `bezelOuter: 0`, `bezelChassis: false`. |
+| **`6x CRT Totem (Wall)`** (`CRT_6X_TOTEM_PRESET`) | Physical 2×3 CRT totem rack | `matrixSplit: true`, `bezelChassis: true`, `bezelComp: 0.65`, `perScreenVariance: 0.35`, individual tube curvature enabled. |
+| **`6x Physical Output`** (`CRT_6X_PHYSICAL_PRESET`) | Hardware video wall splitter handling physical bezels externally | `matrixSplit: true`, `bezelWidthX: 0`, `bezelWidthY: 0`, `bezelOuter: 0`, `bezelChassis: false`. |
 | **`1x Flat Screen`** | Modern vertical 9:16 LCD/OLED kiosk display | `matrixSplit: false`, `tubeCurve: false`, flat scanlines, minimal vignette. |
 | **`1x CRT Tube`** | Single standalone 4:3 or 16:9 vintage CRT television | `matrixSplit: false`, `tubeCurve: true`, heavy barrel distortion and phosphor triad mask. |
 
@@ -120,7 +120,7 @@ Calibration data is saved across three redundant tiers to guarantee settings are
 
 ## 5. Administration & Ingestion Deck (`/admin`)
 
-The Express server includes a dedicated web-based administration console located at `http://localhost:3000/admin` ([`server/routes/admin.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/server/routes/admin.ts)):
+The Express server includes a dedicated web-based administration console located at `http://localhost:3000/admin` ([`server/routes/admin.ts`](../../server/routes/admin.ts)):
 
 ### Capabilities
 - **YouTube API Quota Monitor**: Live gauge showing units consumed today, remaining budget, and protected mode status.
@@ -131,4 +131,4 @@ The Express server includes a dedicated web-based administration console located
 
 ---
 
-*Next Step: Explore [08. Hardware Deployment & Operations](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/08-hardware-deployment-and-operations.md) for physical totem assembly and exhibition runbooks.*
+*Next Step: Explore [08. Hardware Deployment & Operations](./08-hardware-deployment-and-operations.md) for physical totem assembly and exhibition runbooks.*

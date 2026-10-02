@@ -16,7 +16,7 @@ This document records the chronological development phases and key Architectural
 ```
 
 ### Phase 1: PRD & System Architecture Blueprint
-- Defined system objectives, aesthetic targets, and physical hardware requirements in [docs/prd.md](file:///home/bricktop/Projects/pabellon/v-feed-06/docs/prd.md) and [agent-plan.md](file:///home/bricktop/Projects/pabellon/v-feed-06/agent-plan.md).
+- Defined system objectives, aesthetic targets, and physical hardware requirements in [docs/prd.md](../prd.md) and [agent-plan.md](../../agent-plan.md).
 - Established the 1080×1920 vertical format split into a 2×3 monitor matrix.
 
 ### Phase 2: Ingestion Server & Video Management

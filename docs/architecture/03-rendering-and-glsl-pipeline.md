@@ -8,7 +8,7 @@ This document details the graphics architecture, Three.js WebGL setup, 2×3 matr
 
 Many WebGL post-processing pipelines chain multiple rendering passes using Frame Buffer Objects (FBOs) in a "ping-pong" structure (Pass 1: Video → Pass 2: Glitch → Pass 3: Blur → Pass 4: CRT Curvature → Pass 5: Output).
 
-In V-FEED [06], **the entire visual pipeline is executed in a single GLSL fragment shader pass** ([`CompositeShader.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CompositeShader.ts#L8)).
+In V-FEED [06], **the entire visual pipeline is executed in a single GLSL fragment shader pass** ([`CompositeShader.ts`](../../src/rendering/shaders/CompositeShader.ts#L8)).
 
 ### Why Single-Pass?
 1. **Frame Budget (16.6 ms @ 60 FPS)**: Museum kiosks frequently run on compact mini-PCs (e.g. Intel NUC, Mac Mini, or mid-range GPUs). Multi-pass FBO ping-pong causes continuous texture read/write memory bandwidth bottlenecks at 1080×1920 resolution.
@@ -19,7 +19,7 @@ In V-FEED [06], **the entire visual pipeline is executed in a single GLSL fragme
 
 ## 2. Three.js Scene Composition (`SceneManager.ts`)
 
-Located in [`src/rendering/SceneManager.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/SceneManager.ts), the [`SceneManager`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/SceneManager.ts#L20) sets up an ultra-lightweight WebGL environment:
+Located in [`src/rendering/SceneManager.ts`](../../src/rendering/SceneManager.ts), the [`SceneManager`](../../src/rendering/SceneManager.ts#L20) sets up an ultra-lightweight WebGL environment:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -49,7 +49,7 @@ Located in [`src/rendering/SceneManager.ts`](file:///Users/mclovin/Documents/pab
 ```
 
 ### Video Texture Binding (`VideoTexturePass.ts`)
-The [`VideoTexturePass`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/VideoTexturePass.ts#L4) encapsulates the HTML5 `<video>` element into a `THREE.VideoTexture`.
+The [`VideoTexturePass`](../../src/rendering/VideoTexturePass.ts#L4) encapsulates the HTML5 `<video>` element into a `THREE.VideoTexture`.
 - `minFilter` / `magFilter`: Set to `THREE.LinearFilter` for smooth bilinear interpolation during tube distortion.
 - `generateMipmaps`: Disabled (`false`) to prevent expensive per-frame mipmap generation overhead on video playback.
 
@@ -57,7 +57,7 @@ The [`VideoTexturePass`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/
 
 ## 3. 2×3 Matrix Partitioning Geometry (`MatrixSplitter.ts`)
 
-The logical coordinate space of the 1080×1920 canvas is defined in [`src/rendering/MatrixSplitter.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/MatrixSplitter.ts).
+The logical coordinate space of the 1080×1920 canvas is defined in [`src/rendering/MatrixSplitter.ts`](../../src/rendering/MatrixSplitter.ts).
 
 ### UV Coordinate Partitioning
 In WebGL, UV coordinates range from `(0, 0)` at the bottom-left to `(1, 1)` at the top-right. The 6 screens map to the following UV quadrants:
@@ -99,7 +99,7 @@ To solve this without external hardware, V-FEED [06] implements **per-monitor 4-
 ### The Mathematics: Closed-Form Inverse Bilinear Interpolation
 Standard affine 2D transformations cannot map an arbitrary convex quadrilateral into a rectangle without perspective distortion. A full 3×3 projective homography matrix requires an expensive 3×3 matrix inversion.
 
-Instead, [`CompositeShader.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CompositeShader.ts#L63-L103) implements a closed-form **Inverse Bilinear Interpolation** function ([`invBilinear`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CompositeShader.ts#L63)):
+Instead, [`CompositeShader.ts`](../../src/rendering/shaders/CompositeShader.ts#L63-L103) implements a closed-form **Inverse Bilinear Interpolation** function ([`invBilinear`](../../src/rendering/shaders/CompositeShader.ts#L63)):
 
 ```glsl
 // Closed-form inverse bilinear mapping from screen pixel p to local quad (u, v) in [0, 1]
@@ -142,14 +142,14 @@ vec2 invBilinear(vec2 p, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
 ```
 
 ### Corner Offsets Array
-The shader receives `uniform vec2 uCorners[24]` computed by [`computeAllScreenCorners()`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/MatrixSplitter.ts#L182). 
+The shader receives `uniform vec2 uCorners[24]` computed by [`computeAllScreenCorners()`](../../src/rendering/MatrixSplitter.ts#L141). 
 Each screen $i \in [0..5]$ has 4 vertex offsets:
 - `p0 = Bottom-Left (BL)`
 - `p1 = Bottom-Right (BR)`
 - `p2 = Top-Right (TR)`
 - `p3 = Top-Left (TL)`
 
-Curators can drag any of the 24 corner handles in real time on the [Calibration Console](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/07-calibration-and-control-deck.md) to align the projected image precisely to the curved glass bezel of each physical CRT.
+Curators can drag any of the 24 corner handles in real time on the [Calibration Console](./07-calibration-and-control-deck.md) to align the projected image precisely to the curved glass bezel of each physical CRT.
 
 ---
 
@@ -178,18 +178,18 @@ The composite fragment shader integrates three modular GLSL chunks:
 │   │  - V-Hold Vertical Frame Roll (fract)               │   │
 │   │  - Horizontal Sync Jitter & Tearing                 │   │
 │   │  - RGB Chromatic Aberration Channel Split           │   │
-│   │  - Localized Electromagnetic Ripple Wave            │   │
 │   └──────────────────────────┬──────────────────────────┘   │
 │                              │                              │
 │   ┌──────────────────────────▼──────────────────────────┐   │
 │   │  NoiseShader.ts:                                    │   │
 │   │  - High-Frequency RF Static Noise                   │   │
 │   │  - Signal Lock Tuning Modulation (Human Antenna)    │   │
+│   │  - Localized Electromagnetic Ripple Wave            │   │
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 5.1 CRT Physicality ([`CRTShader.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/CRTShader.ts#L10))
+### 5.1 CRT Physicality ([`CRTShader.ts`](../../src/rendering/shaders/CRTShader.ts#L10))
 1. **Barrel Lens Curvature**:
    Analog CRT tubes use curved glass faces. The distortion is calculated using radial polynomial displacement:
    $$\vec{r} = \vec{uv} - 0.5$$
@@ -201,7 +201,7 @@ The composite fragment shader integrates three modular GLSL chunks:
    Sub-pixel red, green, and blue phosphor stripes are simulated by sampling an alternating 3-column RGB grid:
    $$\text{mask} = \begin{cases} (1.0, \text{dim}, \text{dim}) & \text{if } x \equiv 0 \pmod 3 \\ (\text{dim}, 1.0, \text{dim}) & \text{if } x \equiv 1 \pmod 3 \\ (\text{dim}, \text{dim}, 1.0) & \text{if } x \equiv 2 \pmod 3 \end{cases}$$
 
-### 5.2 Transmission Glitches ([`GlitchShader.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/shaders/GlitchShader.ts#L6))
+### 5.2 Transmission Glitches ([`GlitchShader.ts`](../../src/rendering/shaders/GlitchShader.ts#L2))
 1. **V-Hold Frame Roll**:
    When television vertical synchronization is lost, the frame scrolls vertically:
    $$\vec{uv}.y = \text{fract}(\vec{uv}.y + \text{time} \cdot \text{vHoldSpeed})$$
@@ -212,16 +212,22 @@ The composite fragment shader integrates three modular GLSL chunks:
    Color channels are sampled at displaced coordinates to simulate misaligned deflection yokes:
    $$R = \text{sample}(\vec{uv} + \vec{\delta}), \quad G = \text{sample}(\vec{uv}), \quad B = \text{sample}(\vec{uv} - \vec{\delta})$$
 
-### 5.3 Localized Hand Ripple Interference
-When a spectator holds their hand in front of a monitor, [`GestureMapper`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/vision/GestureMapper.ts#L8) sets `uRippleCenter` to the hand's normalized coordinate and boosts `uRippleStrength`. The shader creates an electromagnetic displacement wave:
+### 5.3 Localized Hand Ripple Interference ([`NoiseShader.ts`](../../src/rendering/shaders/NoiseShader.ts#L20-L26))
+When a spectator holds their hand in front of a monitor, [`GestureMapper`](../../src/vision/GestureMapper.ts#L8) sets `uRippleCenter` to the hand's normalized coordinate and boosts `uRippleStrength`. The shader calculates `rippleDistort()` in [`NoiseShader.ts`](../../src/rendering/shaders/NoiseShader.ts#L20):
 $$\text{dist} = |\vec{uv} - \vec{u}_{\text{rippleCenter}}|$$
-$$\vec{uv} = \vec{uv} + \frac{\vec{uv} - \vec{u}_{\text{rippleCenter}}}{\text{dist}} \cdot \sin(\text{dist} \cdot 40.0 - \text{time} \cdot 15.0) \cdot \text{strength} \cdot e^{-5.0 \cdot \text{dist}}$$
+$$\vec{uv} = \vec{uv} + \frac{\vec{uv} - \vec{u}_{\text{rippleCenter}}}{\text{dist}} \cdot \sin(\text{dist} \cdot 48.0 - \text{strength} \cdot 12.0) \cdot \text{strength} \cdot 0.02 \cdot e^{-6.0 \cdot \text{dist}}$$
+
+### 5.4 Per-Monitor Transformations & Cover Sampling
+To support physical mounting variations and seamless video framing:
+- **Flips & Rotations**: `uScreenFlips[6]` (`vec2` per screen) and `uScreenRotations[6]` (float per screen in degrees), alongside global flags `uGlobalFlipH`, `uGlobalFlipV`, and `uGlobalRotation`.
+- **Aspect Ratio & Cover Fit**: `uVideoAspect`, `uViewportAspect`, and `uCoverSample` maintain correct 9:16 vertical video proportions across arbitrary display aspect ratios without anamorphic stretching.
+- **Bezel Chassis Rendering**: When `uBezelChassis` is enabled, the areas between virtual screens render a dark, metallic chassis bezel texture with rounded inner borders (`uCornerRounding`).
 
 ---
 
 ## 6. Phosphor Skeleton Overlay (`SkeletonOverlay.ts`)
 
-Located in [`src/rendering/SkeletonOverlay.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/SkeletonOverlay.ts), this class manages a high-performance 2D canvas (`#skeleton-stage`) layered directly over the WebGL canvas.
+Located in [`src/rendering/SkeletonOverlay.ts`](../../src/rendering/SkeletonOverlay.ts#L132), this class manages a high-performance 2D canvas (`#skeleton-stage`) layered directly over the WebGL canvas.
 
 ### Features
 - **Bone Graph**: Connects 33 MediaPipe pose landmarks (shoulders, elbows, wrists, hips, knees, ankles) and 21 hand joints.
@@ -236,7 +242,7 @@ Located in [`src/rendering/SkeletonOverlay.ts`](file:///Users/mclovin/Documents/
 
 ## 7. Procedural Fallback Feed (`ProceduralFeed.ts`)
 
-Located in [`src/rendering/ProceduralFeed.ts`](file:///Users/mclovin/Documents/pabellon/v-feed-06/src/rendering/ProceduralFeed.ts), this module generates a live canvas-based animation when no video files are present or while the video queue is initializing:
+Located in [`src/rendering/ProceduralFeed.ts`](../../src/rendering/ProceduralFeed.ts), this module generates a live canvas-based animation when no video files are present or while the video queue is initializing:
 - Animated green phosphor oscilloscope sine and Lissajous curves.
 - Synchronized timecode, telemetry readouts, and frame counters.
 - Discrete monitor identifier tags (`CRT [01]` to `CRT [06]`).
@@ -244,4 +250,4 @@ Located in [`src/rendering/ProceduralFeed.ts`](file:///Users/mclovin/Documents/p
 
 ---
 
-*Next Step: Explore [04. Computer Vision & Human Antenna](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/architecture/04-computer-vision-and-human-antenna.md) to understand how spectator movement is analyzed and mapped.*
+*Next Step: Explore [04. Computer Vision & Human Antenna](./04-computer-vision-and-human-antenna.md) to understand how spectator movement is analyzed and mapped.*

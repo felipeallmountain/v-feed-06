@@ -9,7 +9,7 @@
 | **Type** | Interactive Transmedia Installation / Computational Video Art |
 | **Version** | 1.0.0 |
 | **Status** | Approved for Development |
-| **Conceptual Reference** | [`/docs/propuesta.md`](file:///Users/mclovin/Documents/pabellon/v-feed-06/docs/propuesta.md) / Artwork by Joshua Ellingson |
+| **Conceptual Reference** | [`/docs/propuesta.md`](./propuesta.md) / Artwork by Joshua Ellingson |
 | **Last Updated** | August 2026 |
 
 ---
