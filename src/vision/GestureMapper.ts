@@ -1,6 +1,11 @@
 import { IDLE_TIMEOUT_MS } from '../core/constants';
 import { useAppStore, type HandPoint } from '../core/StateManager';
 import type { TrackerFrame } from './MediaPipeTracker';
+import {
+  computeCalibratedScreenQuads,
+  distanceToQuad,
+  isPointInQuad,
+} from '../rendering/MatrixSplitter';
 
 /**
  * Maps MediaPipe telemetry → Human Antenna shader uniforms (FR-03).
@@ -105,8 +110,13 @@ export class GestureMapper {
     // --- PER-PIECE HUMAN ANTENNA COUPLING (6 CRT Screens by Landmark Dot Presence) ---
     const handBoost = store.tracking.antennaHandBoost ?? 1.6;
 
-    // 6-Screen Bounding Boxes in top-down camera space [x in 0..1, y in 0..1]
-    const screenBoxes = [
+    // 6-Screen Detection Quads (dynamically computed from calibrated matrix geometry)
+    const calibratedQuads = store.shaders.matrixSplit
+      ? computeCalibratedScreenQuads(store.shaders)
+      : null;
+
+    // Fallback nominal boxes when matrixSplit is disabled
+    const fallbackBoxes = [
       { minX: 0.0, maxX: 0.5, minY: 0.0, maxY: 1 / 3 }, // CRT 01 [Top-L]
       { minX: 0.5, maxX: 1.0, minY: 0.0, maxY: 1 / 3 }, // CRT 02 [Top-R]
       { minX: 0.0, maxX: 0.5, minY: 1 / 3, maxY: 2 / 3 }, // CRT 03 [Mid-L]
@@ -168,26 +178,41 @@ export class GestureMapper {
     const nextNoises: number[] = [];
 
     for (let i = 0; i < 6; i++) {
-      const box = screenBoxes[i];
+      const quad = calibratedQuads?.[i];
+      const box = fallbackBoxes[i];
       let screenDotScore = 0;
 
       for (const dot of dots) {
-        // Check if dot is inside this screen's bounding box
-        if (
-          dot.x >= box.minX &&
-          dot.x <= box.maxX &&
-          dot.y >= box.minY &&
-          dot.y <= box.maxY
-        ) {
-          screenDotScore += dot.weight;
+        if (quad) {
+          // Check if dot is inside this screen's calibrated quad
+          if (isPointInQuad(dot.x, dot.y, quad)) {
+            screenDotScore += dot.weight;
+          } else {
+            // Soft boundary bleed (only within 0.08 margin of the quad perimeter)
+            const edgeDist = distanceToQuad(dot.x, dot.y, quad);
+            if (edgeDist < 0.08) {
+              const bleed = Math.exp(-(edgeDist * edgeDist) / (2 * 0.035 * 0.035));
+              screenDotScore += dot.weight * bleed * 0.4;
+            }
+          }
         } else {
-          // Soft boundary bleed (only within 0.08 margin of the screen edge)
-          const clampX = THREE_CLAMP(dot.x, box.minX, box.maxX);
-          const clampY = THREE_CLAMP(dot.y, box.minY, box.maxY);
-          const edgeDist = Math.hypot(dot.x - clampX, (dot.y - clampY) * 1.5);
-          if (edgeDist < 0.08) {
-            const bleed = Math.exp(-(edgeDist * edgeDist) / (2 * 0.035 * 0.035));
-            screenDotScore += dot.weight * bleed * 0.4;
+          // Check if dot is inside fallback bounding box
+          if (
+            dot.x >= box.minX &&
+            dot.x <= box.maxX &&
+            dot.y >= box.minY &&
+            dot.y <= box.maxY
+          ) {
+            screenDotScore += dot.weight;
+          } else {
+            // Soft boundary bleed (only within 0.08 margin of the screen edge)
+            const clampX = THREE_CLAMP(dot.x, box.minX, box.maxX);
+            const clampY = THREE_CLAMP(dot.y, box.minY, box.maxY);
+            const edgeDist = Math.hypot(dot.x - clampX, (dot.y - clampY) * 1.5);
+            if (edgeDist < 0.08) {
+              const bleed = Math.exp(-(edgeDist * edgeDist) / (2 * 0.035 * 0.035));
+              screenDotScore += dot.weight * bleed * 0.4;
+            }
           }
         }
       }

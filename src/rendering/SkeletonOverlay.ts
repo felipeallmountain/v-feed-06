@@ -1,6 +1,10 @@
 import { getViewportSize, MAX_DEVICE_PIXEL_RATIO } from '../core/constants';
 import { useAppStore, type SkeletonStyle } from '../core/StateManager';
-import { computeAllScreenCorners } from './MatrixSplitter';
+import {
+  computeAllScreenCorners,
+  computeCalibratedScreenQuads,
+  mapPointToCalibratedScreen,
+} from './MatrixSplitter';
 import type { TrackerFrame } from '../vision/MediaPipeTracker';
 import { SCREEN_POSE_MAP, POSE_DISPLAY_NAMES } from '../vision/BroadcastQuerySynthesizer';
 
@@ -1631,6 +1635,8 @@ export class SkeletonOverlay {
     const smoothing = Math.min(Math.max(skeletonSmoothing ?? 0.5, 0), 0.98);
     const newSmoothedPoses: Array<Array<{ x: number; y: number }>> = [];
 
+    const calibratedQuads = shaders.matrixSplit ? computeCalibratedScreenQuads(shaders) : [];
+
     let personSeed = 0;
     let personIdx = 0;
     for (const lm of poses) {
@@ -1652,8 +1658,9 @@ export class SkeletonOverlay {
         }
         currSmoothed[idx] = { x: sx, y: sy };
 
-        const rawX = sx * w;
-        const rawY = sy * h;
+        const mapped = mapPointToCalibratedScreen(sx, sy, calibratedQuads, shaders.matrixSplit);
+        const rawX = mapped.x * w;
+        const rawY = mapped.y * h;
         return {
           ...p,
           pt: this.getJitteredPoint(rawX, rawY, personSeed + idx, skeletonJitter, w),
@@ -1793,9 +1800,10 @@ export class SkeletonOverlay {
           const rWrist = primaryLm[16];
           const originPt = inter.zapDirection === 'prev' ? (lWrist ?? nose) : (rWrist ?? nose);
           if (originPt) {
+            const mappedOrigin = mapPointToCalibratedScreen(originPt.x, originPt.y, calibratedQuads, sh.matrixSplit);
             const beamColor = inter.zapDirection === 'prev' ? '#ffaa00' : inter.zapDirection === 'random' ? '#00ffa3' : '#00e5ff';
             this.drawLightningArc(
-              { x: originPt.x * w, y: originPt.y * h },
+              { x: mappedOrigin.x * w, y: mappedOrigin.y * h },
               { x: quadCenterX, y: quadCenterY },
               zapIntensity * 1.5,
               w,
@@ -1835,8 +1843,9 @@ export class SkeletonOverlay {
         }
         currSmoothedH[idx] = { x: sx, y: sy };
 
-        const rawX = sx * w;
-        const rawY = sy * h;
+        const mapped = mapPointToCalibratedScreen(sx, sy, calibratedQuads, shaders.matrixSplit);
+        const rawX = mapped.x * w;
+        const rawY = mapped.y * h;
         return {
           ...p,
           pt: this.getJitteredPoint(rawX, rawY, handIdx + idx, skeletonJitter * 0.85, w),

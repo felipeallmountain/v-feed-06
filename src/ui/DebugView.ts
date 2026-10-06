@@ -1,6 +1,7 @@
 import { useAppStore } from '../core/StateManager';
 import type { TrackerFrame } from '../vision/MediaPipeTracker';
 import { SCREEN_POSE_MAP } from '../vision/BroadcastQuerySynthesizer';
+import { computeCalibratedScreenQuads } from '../rendering/MatrixSplitter';
 
 export class DebugView {
   private canvas: HTMLCanvasElement;
@@ -131,24 +132,25 @@ export class DebugView {
     this.ctx.restore();
 
     // 2. Draw 2x3 matrix antenna quadrant guides on the fitted camera feed
-    if (useAppStore.getState().shaders.matrixSplit) {
+    const sh = useAppStore.getState().shaders;
+    if (sh.matrixSplit) {
+      const quads = computeCalibratedScreenQuads(sh);
       this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.45)';
       this.ctx.lineWidth = 1.5;
-      this.ctx.beginPath();
-      // Vertical 2-column split (Left vs Right CRT)
-      this.ctx.moveTo(drawX + drawW * 0.5, drawY);
-      this.ctx.lineTo(drawX + drawW * 0.5, drawY + drawH);
-      // Horizontal 3-row splits (Top, Mid, Bot CRT)
-      this.ctx.moveTo(drawX, drawY + drawH * (1 / 3));
-      this.ctx.lineTo(drawX + drawW, drawY + drawH * (1 / 3));
-      this.ctx.moveTo(drawX, drawY + drawH * (2 / 3));
-      this.ctx.lineTo(drawX + drawW, drawY + drawH * (2 / 3));
-      this.ctx.stroke();
+      for (let i = 0; i < quads.length; i++) {
+        const q = quads[i];
+        this.ctx.beginPath();
+        this.ctx.moveTo(drawX + q.tl.x * drawW, drawY + q.tl.y * drawH);
+        this.ctx.lineTo(drawX + q.tr.x * drawW, drawY + q.tr.y * drawH);
+        this.ctx.lineTo(drawX + q.br.x * drawW, drawY + q.br.y * drawH);
+        this.ctx.lineTo(drawX + q.bl.x * drawW, drawY + q.bl.y * drawH);
+        this.ctx.closePath();
+        this.ctx.stroke();
 
-      // Screen border box
-      this.ctx.strokeStyle = 'rgba(61, 220, 151, 0.7)';
-      this.ctx.lineWidth = 1;
-      this.ctx.strokeRect(drawX, drawY, drawW, drawH);
+        this.ctx.font = '8px monospace';
+        this.ctx.fillStyle = 'rgba(61, 220, 151, 0.85)';
+        this.ctx.fillText(`CRT [0${i + 1}]`, drawX + q.tl.x * drawW + 4, drawY + q.tl.y * drawH + 10);
+      }
     }
 
     // 3. Draw Landmark Dots accurately mapped to the fitted camera feed
@@ -216,61 +218,58 @@ export class DebugView {
 
       // Draw 2x3 CRT Matrix overlay guide lines
       if (matrixSplit) {
+        const sh = useAppStore.getState().shaders;
+        const quads = computeCalibratedScreenQuads(sh);
         this.ctx.strokeStyle = 'rgba(240, 165, 0, 0.45)';
         this.ctx.lineWidth = 1;
-        this.ctx.beginPath();
-        // Vertical center line (2 columns)
-        this.ctx.moveTo(drawX + drawW * 0.5, drawY);
-        this.ctx.lineTo(drawX + drawW * 0.5, drawY + drawH);
-        // Horizontal lines (3 rows)
-        this.ctx.moveTo(drawX, drawY + drawH * (1 / 3));
-        this.ctx.lineTo(drawX + drawW, drawY + drawH * (1 / 3));
-        this.ctx.moveTo(drawX, drawY + drawH * (2 / 3));
-        this.ctx.lineTo(drawX + drawW, drawY + drawH * (2 / 3));
-        this.ctx.stroke();
-
-        // 6-screen quadrant labels with antenna signal lock meters
         this.ctx.font = '8px monospace';
-        const qW = drawW / 2;
-        const qH = drawH / 3;
-        const sh = useAppStore.getState().shaders;
 
-        for (let r = 0; r < 3; r++) {
-          for (let c = 0; c < 2; c++) {
-            const screenIdx = r * 2 + c;
-            const idx = screenIdx + 1;
-            const lockPct = Math.round(
-              (sh.screenSignalLocks?.[screenIdx] ?? sh.signalLock ?? 0) * 100,
-            );
-            const noisePct = Math.round(
-              (sh.screenNoiseGains?.[screenIdx] ?? sh.noiseGain ?? 1) * 100,
-            );
+        for (let i = 0; i < quads.length; i++) {
+          const q = quads[i];
+          this.ctx.beginPath();
+          this.ctx.moveTo(drawX + q.tl.x * drawW, drawY + q.tl.y * drawH);
+          this.ctx.lineTo(drawX + q.tr.x * drawW, drawY + q.tr.y * drawH);
+          this.ctx.lineTo(drawX + q.br.x * drawW, drawY + q.br.y * drawH);
+          this.ctx.lineTo(drawX + q.bl.x * drawW, drawY + q.bl.y * drawH);
+          this.ctx.closePath();
+          this.ctx.stroke();
 
-            const qX = drawX + c * qW;
-            const qY = drawY + r * qH;
+          const idx = i + 1;
+          const lockPct = Math.round(
+            (sh.screenSignalLocks?.[i] ?? sh.signalLock ?? 0) * 100,
+          );
+          const noisePct = Math.round(
+            (sh.screenNoiseGains?.[i] ?? sh.noiseGain ?? 1) * 100,
+          );
 
-            // Quadrant name
-            this.ctx.fillStyle = 'rgba(240, 165, 0, 0.85)';
-            this.ctx.fillText(`CRT [0${idx}]`, qX + 4, qY + 10);
+          const qX = drawX + q.tl.x * drawW;
+          const qY = drawY + q.tl.y * drawH;
 
-            // Antenna Lock % badge with color coding
-            const lockColor =
-              lockPct > 70 ? '#3ddc97' : lockPct > 30 ? '#ffb703' : '#ff3366';
-            this.ctx.fillStyle = lockColor;
-            this.ctx.fillText(
-              `ANT:${lockPct}% N:${noisePct}%`,
-              qX + 4,
-              qY + 20,
-            );
+          // Quadrant name
+          this.ctx.fillStyle = 'rgba(240, 165, 0, 0.85)';
+          this.ctx.fillText(`CRT [0${idx}]`, qX + 4, qY + 10);
 
-            // Mini antenna reception signal bar
-            const barW = Math.max(20, qW - 12);
-            const barH = 2;
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            this.ctx.fillRect(qX + 4, qY + 23, barW, barH);
-            this.ctx.fillStyle = lockColor;
-            this.ctx.fillRect(qX + 4, qY + 23, (barW * lockPct) / 100, barH);
-          }
+          // Antenna Lock % badge with color coding
+          const lockColor =
+            lockPct > 70 ? '#3ddc97' : lockPct > 30 ? '#ffb703' : '#ff3366';
+          this.ctx.fillStyle = lockColor;
+          this.ctx.fillText(
+            `ANT:${lockPct}% N:${noisePct}%`,
+            qX + 4,
+            qY + 20,
+          );
+
+          // Mini antenna reception signal bar
+          const quadW = Math.hypot(
+            (q.tr.x - q.tl.x) * drawW,
+            (q.tr.y - q.tl.y) * drawH,
+          );
+          const barW = Math.max(20, quadW - 12);
+          const barH = 2;
+          this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+          this.ctx.fillRect(qX + 4, qY + 23, barW, barH);
+          this.ctx.fillStyle = lockColor;
+          this.ctx.fillRect(qX + 4, qY + 23, (barW * lockPct) / 100, barH);
         }
       }
 

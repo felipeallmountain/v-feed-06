@@ -246,11 +246,231 @@ export function computeAllScreenCorners(
   return corners;
 }
 
+export interface CalibratedScreenQuad {
+  index: number;
+  name: string;
+  label: string;
+  col: number;
+  row: number;
+  tl: { x: number; y: number };
+  tr: { x: number; y: number };
+  br: { x: number; y: number };
+  bl: { x: number; y: number };
+  bounds: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  };
+  center: { x: number; y: number };
+}
+
+export interface ShaderGeometryConfig {
+  bezelWidthX: number;
+  bezelWidthY: number;
+  bezelOuter: number;
+  cornerOffsets: ScreenCornerOffsets[];
+  screenOffsets?: Array<[number, number]>;
+  screenFlips?: ScreenFlipState[];
+  globalRotation?: number;
+  globalFineRotation?: number;
+  globalOffsetX?: number;
+  globalOffsetY?: number;
+}
+
+/**
+ * Computes the 6 calibrated screen quadrilaterals in top-down screen coordinates [0, 1]^2
+ * (y=0 at top, y=1 at bottom), incorporating bezels, per-screen offsets, corner keystone pinning,
+ * rotations, and global offsets.
+ */
+export function computeCalibratedScreenQuads(
+  config: ShaderGeometryConfig,
+): CalibratedScreenQuad[] {
+  const uvCorners = computeAllScreenCorners(
+    config.bezelWidthX,
+    config.bezelWidthY,
+    config.bezelOuter,
+    config.cornerOffsets,
+    config.screenOffsets,
+    config.screenFlips,
+    config.globalRotation ?? 0,
+    config.globalFineRotation ?? 0,
+    config.globalOffsetX ?? 0,
+    config.globalOffsetY ?? 0,
+  );
+
+  const quads: CalibratedScreenQuad[] = [];
+
+  for (let i = 0; i < TOTAL_SCREENS; i++) {
+    const quadInfo = MATRIX_QUADRANTS[i];
+    const base = i * 4;
+    // UV space corners: 0=BL, 1=BR, 2=TR, 3=TL (y=0 bottom, y=1 top)
+    const uvBL = uvCorners[base + 0];
+    const uvBR = uvCorners[base + 1];
+    const uvTR = uvCorners[base + 2];
+    const uvTL = uvCorners[base + 3];
+
+    // Convert to top-down screen coordinates (y=0 top, y=1 bottom)
+    const tl = { x: uvTL.x, y: 1.0 - uvTL.y };
+    const tr = { x: uvTR.x, y: 1.0 - uvTR.y };
+    const br = { x: uvBR.x, y: 1.0 - uvBR.y };
+    const bl = { x: uvBL.x, y: 1.0 - uvBL.y };
+
+    const minX = Math.min(tl.x, tr.x, br.x, bl.x);
+    const maxX = Math.max(tl.x, tr.x, br.x, bl.x);
+    const minY = Math.min(tl.y, tr.y, br.y, bl.y);
+    const maxY = Math.max(tl.y, tr.y, br.y, bl.y);
+
+    const center = {
+      x: (tl.x + tr.x + br.x + bl.x) * 0.25,
+      y: (tl.y + tr.y + br.y + bl.y) * 0.25,
+    };
+
+    quads.push({
+      index: i,
+      name: quadInfo.name,
+      label: quadInfo.label,
+      col: quadInfo.col,
+      row: quadInfo.row,
+      tl,
+      tr,
+      br,
+      bl,
+      bounds: { minX, maxX, minY, maxY },
+      center,
+    });
+  }
+
+  return quads;
+}
+
+/**
+ * Tests if point (px, py) is inside the quadrilateral (tl, tr, br, bl).
+ * Uses sign consistency of 2D cross products for clockwise directed edges.
+ */
+export function isPointInQuad(
+  px: number,
+  py: number,
+  quad: {
+    tl: { x: number; y: number };
+    tr: { x: number; y: number };
+    br: { x: number; y: number };
+    bl: { x: number; y: number };
+  },
+): boolean {
+  const c1 = (quad.tr.x - quad.tl.x) * (py - quad.tl.y) - (quad.tr.y - quad.tl.y) * (px - quad.tl.x);
+  const c2 = (quad.br.x - quad.tr.x) * (py - quad.tr.y) - (quad.br.y - quad.tr.y) * (px - quad.tr.x);
+  const c3 = (quad.bl.x - quad.br.x) * (py - quad.br.y) - (quad.bl.y - quad.br.y) * (px - quad.br.x);
+  const c4 = (quad.tl.x - quad.bl.x) * (py - quad.bl.y) - (quad.tl.y - quad.bl.y) * (px - quad.bl.x);
+
+  const hasPos = c1 > 0 || c2 > 0 || c3 > 0 || c4 > 0;
+  const hasNeg = c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0;
+
+  return !(hasPos && hasNeg);
+}
+
+function distanceToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-10) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * Calculates Euclidean distance from point (px, py) to the nearest edge of the quad,
+ * or returns 0 if the point is inside the quad.
+ */
+export function distanceToQuad(
+  px: number,
+  py: number,
+  quad: CalibratedScreenQuad,
+): number {
+  if (isPointInQuad(px, py, quad)) return 0;
+  const d1 = distanceToSegment(px, py, quad.tl.x, quad.tl.y, quad.tr.x, quad.tr.y);
+  const d2 = distanceToSegment(px, py, quad.tr.x, quad.tr.y, quad.br.x, quad.br.y);
+  const d3 = distanceToSegment(px, py, quad.br.x, quad.br.y, quad.bl.x, quad.bl.y);
+  const d4 = distanceToSegment(px, py, quad.bl.x, quad.bl.y, quad.tl.x, quad.tl.y);
+  return Math.min(d1, d2, d3, d4);
+}
+
+/**
+ * Maps a point (x, y) in nominal viewport/camera space [0, 1]^2 to the calibrated
+ * screen space. If matrixSplit is true, maps (x, y) into the corresponding calibrated screen quad
+ * via bilinear quad interpolation.
+ */
+export function mapPointToCalibratedScreen(
+  x: number,
+  y: number,
+  quads: CalibratedScreenQuad[],
+  matrixSplit = true,
+): { x: number; y: number } {
+  if (!matrixSplit || !quads || quads.length < TOTAL_SCREENS) {
+    return { x, y };
+  }
+
+  // Determine nominal 2x3 quadrant:
+  // x in [0..0.5] -> col 0, x in [0.5..1.0] -> col 1
+  // y in [0..1/3] -> row 0 (Top), y in [1/3..2/3] -> row 1 (Mid), y in [2/3..1] -> row 2 (Bot)
+  const col = Math.min(1, Math.max(0, x < 0.5 ? 0 : 1));
+  const rowIdx = Math.min(2, Math.max(0, y < 1 / 3 ? 0 : y < 2 / 3 ? 1 : 2));
+  const screenIdx = rowIdx * 2 + col;
+  const quad = quads[screenIdx];
+  if (!quad) return { x, y };
+
+  // Normalized local (u, v) in [0, 1]^2 within the nominal quadrant:
+  const u = Math.min(1, Math.max(0, (x - col * 0.5) / 0.5));
+  const v = Math.min(1, Math.max(0, (y - rowIdx * (1 / 3)) / (1 / 3)));
+
+  // Bilinear interpolation across the 4 corners in top-down space:
+  const topX = quad.tl.x + (quad.tr.x - quad.tl.x) * u;
+  const topY = quad.tl.y + (quad.tr.y - quad.tl.y) * u;
+  const botX = quad.bl.x + (quad.br.x - quad.bl.x) * u;
+  const botY = quad.bl.y + (quad.br.y - quad.bl.y) * u;
+
+  return {
+    x: topX + (botX - topX) * v,
+    y: topY + (botY - topY) * v,
+  };
+}
+
 /**
  * Returns which CRT quadrant contains the normalized point (x, y in [0, 1]).
- * Uses top-down screen coordinates (y=0 top, y=1 bottom) as supplied by vision trackers.
+ * Uses top-down screen coordinates (y=0 top, y=1 bottom).
+ * If calibrated quads are provided, checks against the calibrated screen geometries.
  */
-export function getQuadrantForTopDownPoint(x: number, y: number): MatrixQuadrant {
+export function getQuadrantForTopDownPoint(
+  x: number,
+  y: number,
+  quads?: CalibratedScreenQuad[],
+): MatrixQuadrant {
+  if (quads && quads.length === TOTAL_SCREENS) {
+    for (let i = 0; i < TOTAL_SCREENS; i++) {
+      if (isPointInQuad(x, y, quads[i])) {
+        return MATRIX_QUADRANTS[i];
+      }
+    }
+    let minDist = Infinity;
+    let closestIdx = 0;
+    for (let i = 0; i < TOTAL_SCREENS; i++) {
+      const d = distanceToQuad(x, y, quads[i]);
+      if (d < minDist) {
+        minDist = d;
+        closestIdx = i;
+      }
+    }
+    return MATRIX_QUADRANTS[closestIdx];
+  }
+
   const col = x < 0.5 ? 0 : 1;
   const row = y < 1 / 3 ? 2 : y < 2 / 3 ? 1 : 0;
   const match = MATRIX_QUADRANTS.find((q) => q.col === col && q.row === row);
