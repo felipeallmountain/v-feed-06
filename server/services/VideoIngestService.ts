@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { YouTubeDataService, type YouTubeVideoMeta } from './YouTubeDataService.js';
 import { perfTracker } from './PerformanceTracker.js';
+import { resolveMediaBinaries } from './MediaBinaries.js';
 
 export interface IngestedVideo {
   id: string;
@@ -128,6 +129,9 @@ export class VideoIngestService {
     this.cleanAndRebuildManifest();
     this.checkAndPruneIfNeeded(0);
     this.startTrickleScheduler();
+    resolveMediaBinaries().catch((err) => {
+      console.warn('[v-feed] Media binary resolution warning on startup:', err);
+    });
   }
 
   getYouTubeService(): YouTubeDataService {
@@ -893,6 +897,8 @@ export class VideoIngestService {
     const downloadStartTime = Date.now();
     let downloadSpeed = '--';
 
+    const binaries = await resolveMediaBinaries();
+
     await new Promise<void>((resolve, reject) => {
       // yt-dlp options: format selection prioritizing MP4 up to 1080x1920 vertical format
       const args = [
@@ -900,6 +906,7 @@ export class VideoIngestService {
         'bv*[ext=mp4][height<=1920]+ba[ext=m4a]/b[ext=mp4][height<=1920]/best[height<=1920]/best',
         '--merge-output-format',
         'mp4',
+        ...(binaries.ffmpegPath ? ['--ffmpeg-location', binaries.ffmpegPath] : []),
         '--no-playlist',
         '--newline',
         '--no-mtime',
@@ -910,8 +917,9 @@ export class VideoIngestService {
         `https://www.youtube.com/watch?v=${meta.id}`,
       ];
 
-      const child = spawn('yt-dlp', args, {
+      const child = spawn(binaries.ytDlpPath, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: binaries.spawnEnv,
       });
 
       child.stdout.on('data', (chunk: Buffer) => {

@@ -16,7 +16,7 @@ npm install
 cp .env.example .env
 ```
 
-Add vertical MP4 files to `public/fallback-videos/` for exhibition playback. Without MP4s the app runs a procedural vertical feed so shaders and tracking can still be developed. With `ffmpeg` installed:
+Add vertical MP4 files to `public/fallback-videos/` for exhibition playback. Without MP4s the app runs a procedural vertical feed so shaders and tracking can still be developed. `ffmpeg` and `yt-dlp` are bundled locally as project dependencies (managed automatically via `npm install`). You can generate a test video anytime:
 
 ```bash
 npm run generate:sample
