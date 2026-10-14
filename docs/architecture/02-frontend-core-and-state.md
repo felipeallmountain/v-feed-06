@@ -137,16 +137,31 @@ Maintains optical telemetry from MediaPipe:
 - `antennaLocalWeight`, `antennaHandBoost`, `antennaSmoothing`, `antennaFalloffRadius`: Tuning parameters for the human antenna engine.
 
 #### 3. `InteractionState`
-Maintains high-level spectator semantics:
+Maintains high-level spectator semantics and Channel Zap navigation:
 - `enabled`: `boolean` — Master toggle for algorithmic interaction.
 - `activePose`: `SemanticPose` — `'POSE_ANTENNA' | 'POSE_DIAL_TUNER' | 'POSE_SURPRISE' | 'POSE_WINGSUIT' | 'POSE_LOOP_HALO' | 'POSE_SIGNAL_LOCK' | 'NONE'`.
 - `densityState`: `AudienceDensity` — `'SOLO' | 'DUO' | 'GROUP' | 'EMPTY'`.
 - `kineticState`: `KineticState` — `'HIGH_MOTION' | 'RHYTHMIC' | 'STILLNESS' | 'STEADY'`.
 - `chromaState`: `ClothingChroma` — `'WARM_RED' | 'DARK_NEUTRAL' | 'COOL_BLUE' | 'NEUTRAL'`.
 - `kineticEnergy`: `number` — Normalized 0.0 to 1.0 energy metric.
-- `holdProgress`: `number` — 0.0 to 1.0 countdown progress towards the 1.8-second gesture trigger.
+- `holdProgress`: `number` — 0.0 to 1.0 countdown progress towards gesture trigger.
+- `holdDurationMs`: `number` — Ambient gesture hold requirement in milliseconds (default: 1800ms).
+- `cooldownDurationSec`: `number` — Ambient cooldown duration in seconds (default: 10s).
 - `cooldownRemainingSec`: `number` — Remaining lock seconds before a new query can trigger.
 - `lastQuery`: `string | null` — Text of the last synthesized YouTube query.
+- `lastTriggerReason`: `string | null` — Human-readable description of the last trigger event.
+- **Channel Zap Sub-State**:
+  - `zapEnabled`: `boolean` — Master toggle for CRT pose channel zapping.
+  - `zapNavMode`: `'sequential' | 'directional' | 'random'` — Channel navigation behavior.
+  - `zapActive`: `boolean` — True during an active pose zap transition.
+  - `zapDirection`: `'prev' | 'next' | 'random' | null` — Navigation direction.
+  - `zapPose`: `SemanticPose | null` — Signature pose triggering the zap.
+  - `zapScreenIndex`: `number | null` — Associated CRT monitor index [0..5].
+  - `zapHoldDurationMs`: `number` — Required pose hold duration for zap trigger (default: 400ms–1200ms).
+  - `zapCooldownSec`: `number` — Channel zap cooldown timer (default: 2s).
+  - `zapIntensity`: `number` — Real-time zap visual intensity factor.
+  - `zapProgress`: `number` — 0.0 to 1.0 progress of the channel zap animation.
+  - `zapVisualIntensity`: `number` — User-configurable intensity multiplier for lightning arcs, plasma sparks, and glitch surges.
 
 #### 4. `VideoState` & `AudioState`
 - `videoMode`: `VideoMode` — `'live'` (online YouTube queue), `'cache'` (local MP4 files), or `'grid'` (alignment test pattern).
@@ -167,11 +182,28 @@ Maintains high-level spectator semantics:
 - `isProtectedMode`: `boolean` — True when quota limit is exceeded, forcing cache playback.
 
 #### 6. `FrameState`
-Controls decorative CRT chassis and sci-fi frame overlays:
-- `showScreenFrames`: `boolean` — Toggles screen frame overlay rendering.
-- `style`: `FrameShapeStyle` — `'crt-tube' | 'bracket-corners' | 'rounded-rect' | 'industrial-bezel' | 'minimal-ticks'`.
-- `opacity`: `number` — Global frame overlay opacity (0.0 to 1.0).
-- `transforms`: `ScreenFrameTransform[]` — Array of 6 per-screen position offsets and fine rotations.
+Controls decorative CRT chassis frames, broadcast badges, and pose guide reticles:
+- `show`: `boolean` — Master toggle for screen frame overlay rendering.
+- `shapeStyle`: `FrameShapeStyle` — `'crt-tube' | 'bracket-corners' | 'rounded-rect' | 'industrial-bezel' | 'minimal-ticks'`.
+- `followTubeCurvature`: `boolean` — Informs frame paths to curve according to CRT barrel distortion.
+- `curvatureScale`: `number` — Scale factor for barrel distortion curvature.
+- `cornerRadius`: `number` — Bezel corner rounding radius.
+- `inset`: `number` — Inner border margin padding.
+- `thickness`: `number` — Outline stroke thickness.
+- `opacity`: `number` — Global frame opacity.
+- `showLabels`: `boolean` — Toggles CRT monitor ID badges (`CRT [01]` through `CRT [06]`).
+- `showAntennaMetrics`: `boolean` — Toggles per-screen antenna lock % and noise meters.
+- `showQueryMessage`: `boolean` — Displays the synthesized query text banner across screens.
+- `screenQueryToggles`: `boolean[]` — 6-element boolean array enabling/disabling query banners per monitor.
+- `showLiveFeedBadge`: `boolean` — Displays the pulsing amber `LIVE FEED` broadcast watermark.
+- `showCrosshairs`: `boolean` — Center reticles for optical alignment.
+- `showCornerBrackets`: `boolean` — Precision sci-fi HUD bracket corners.
+- `showPoseGuides`: `boolean` — Renders iconographic silhouettes of target signature poses on each screen.
+- `poseGuideOpacity`, `poseGuideScale`, `poseGuideThickness`: Pose silhouette visual styling.
+- `poseGuidePosition`: `'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'`.
+- `highlightActivePose`: `boolean` — Dynamically illuminates the pose guide when the spectator matches that pose.
+- `screenTransforms`: `ScreenFrameTransform[]` — 6 per-screen position offsets and fine rotations.
+- `resetFrames()`: Action method resetting frame parameters to `DEFAULT_FRAME_STATE`.
 
 ---
 

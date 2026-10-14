@@ -73,32 +73,37 @@ Every 16.6 milliseconds (at 60 FPS), the system processes visual input from the 
 (3) [ FeatureExtractor.ts ] ──► Pose Classification, Crowd Density, Kinetic Energy, Clothing Chroma
        │
        ▼ (InteractionFeatureState)
-(4) [ InteractionController.ts ] ──► Priority Ladder, Hold Debounce (1.8s), Cooldown (10s)
+(4) [ InteractionController.ts ] ──► Priority Ladder, Hold Debounce (1.8s / 0.4-1.2s Zap), Cooldown (10s / 2s Zap)
        │
        ├────────────────────────────────────────┬────────────────────────────────────────┐
-       ▼ (Confirmed Semantic Trigger)           ▼ (Physical Continuous Telemetry)         ▼ (Direct Uniforms)
+       ▼ (Confirmed Semantic Trigger)           ▼ (Physical Continuous Telemetry)         ▼ (Direct Uniforms & Quads)
 (5) [ BroadcastQuerySynthesizer.ts ]     (6) [ GestureMapper.ts ]                  (7) [ StateManager.ts ]
-       │                                        │                                         │
-       ▼ (YouTube Search Query)                 ▼ (Signal Lock, Static, Split)            ▼ (Zustand useAppStore)
-    [ VideoQueue.ts ]                           │                                         │
-       │                                        │                                         ▼
-       ▼                                        └─────────────────────────────────► (8) [ SyncChannel.ts ]
-    [ VideoTexturePass.ts ]                                                               │ (Cross-Window IPC)
-       │                                                                                  ▼
-       │ (HTMLVideoElement <video id="feed-video">)                                [ CalibrationConsole.ts ]
+       │                                        │  ◄── computeCalibratedScreenQuads()      │ (Zustand useAppStore)
+       ▼ (YouTube Search Query / Pose Zap)      ▼ (Signal Lock, Static, Split, Zap FX)     │
+    [ VideoQueue.ts ]                           │                                         ▼
+       │                                        │                                  (8) [ SyncChannel.ts ]
+       ▼                                        └─────────────────────────────────►       │ (Cross-Window IPC)
+    [ VideoTexturePass.ts ]                                                               ▼
+       │                                                                           [ CalibrationConsole.ts ]
+       │ (HTMLVideoElement <video id="feed-video">)
        ▼
 (9) [ SceneManager.ts ] ──► Three.js Orthographic Scene
        │
-       ▼
-    [ CompositeShader.ts ] ──► 2×3 Matrix Split + Keystone Quad Warping + CRT & Glitch Effects
-       │
-       ▼
-[ Output Canvas (#stage) ] ──► HDMI Output (1080×1920 @ 60Hz)
+       ├────────────────────────────────────────┐
+       ▼                                        ▼
+    [ CompositeShader.ts ]                   [ SkeletonOverlay.ts ]
+    - 2×3 Matrix Split                       - Calibrated Quad Joint Mapping
+    - Keystone Quad Warping (invBilinear)    - Lightning Zap Arcs & Plasma Sparks
+    - CRT & Glitch Effects
+       │                                        │
+       └───────────────────┬────────────────────┘
+                           ▼
+               [ Output Canvas (#stage) ] ──► HDMI Output (1080×1920 @ 60Hz)
 
-(10) [ AudioEngine.ts ] ◄── Modulated by Signal Lock & Proximity
+(10) [ AudioEngine.ts ] ◄── Modulated by Signal Lock, Proximity & Rotary Switch Zap
        │
        ▼
-[ Stereo / 2.1 Sound Reinforcement ] ──► 15.734 kHz Hum + Static + Filtered Video Audio
+[ Stereo / 2.1 Sound Reinforcement ] ──► 15.734 kHz Hum + Static + Rotary Zap + Video Audio
 ```
 
 ### Step-by-Step Breakdown
@@ -126,14 +131,18 @@ Every 16.6 milliseconds (at 60 FPS), the system processes visual input from the 
   - **Semantic Key Poses**: Detects signature body postures (`POSE_ANTENNA`, `POSE_DIAL_TUNER`, `POSE_SURPRISE`, `POSE_WINGSUIT`, `POSE_LOOP_HALO`, `POSE_SIGNAL_LOCK`), each mapping directly to one of the 6 CRT screens.
   - **Clothing Chroma**: Samples color data from the visitor's chest region via an offscreen 48×48 canvas to classify wardrobe palette (`WARM_RED`, `COOL_BLUE`, `DARK_NEUTRAL`, `NEUTRAL`).
 
-#### 4. Interaction Control & Conflict Resolution
+#### 4. Interaction Control, Conflict Resolution & Channel Zapping
 - Handled by [`InteractionController`](../../src/vision/InteractionController.ts#L20).
 - Enforces an unambiguous **Priority Ladder**:
   1. **Key Poses** (highest priority)
   2. **Audience Density Shifts**
   3. **Kinetic Dynamics** (lowest priority)
-- Applies a **1.8-second Sustained Hold Debounce** timer. Visitors must hold a pose or kinetic state intentionally before triggering an algorithmic reaction.
-- Enforces a **10-second Cooldown Timer** after each trigger to prevent erratic video switching.
+- **Interactive Channel Zapping**: When `zapEnabled` is active and a visitor performs a signature CRT pose, the controller engages a snappy hold timer (`zapHoldDurationMs`, default 400ms–1200ms) and short cooldown (`zapCooldownSec`, default 2s) to initiate an instant channel zap:
+  - **Sequential Mode**: Advances to the next video in sequence.
+  - **Directional Mode**: Left-column screens (CRT 01, 03, 05) step backward; right-column screens (CRT 02, 04, 06) step forward.
+  - **Random Mode**: Jumps to an unpredictable video channel.
+  - **Visual & Audio Zap FX**: Dispatches high-voltage lightning arcs in [`SkeletonOverlay`](../../src/rendering/SkeletonOverlay.ts), temporary glitch surges in [`GestureMapper`](../../src/vision/GestureMapper.ts), and analog rotary channel switch audio in [`AudioEngine`](../../src/audio/AudioEngine.ts).
+- **Ambient Gesture Mode**: For crowd density and kinetic state shifts, applies a standard **1.8-second Sustained Hold Debounce** and **10-second Cooldown Timer** before synthesizing ambient YouTube queries.
 
 #### 5. Algorithmic Video Query Synthesis
 - Managed by [`synthesizeBroadcastQuery`](../../src/vision/BroadcastQuerySynthesizer.ts#L174).
@@ -143,10 +152,14 @@ Every 16.6 milliseconds (at 60 FPS), the system processes visual input from the 
 
 #### 6. Continuous Physical Mapping (The Human Antenna)
 - Handled continuously by [`GestureMapper`](../../src/vision/GestureMapper.ts#L8).
+- Evaluates hand points against **calibrated screen quadrilaterals** computed dynamically by [`computeCalibratedScreenQuads()`](../../src/rendering/MatrixSplitter.ts#L131):
+  - Uses `isPointInQuad()` for exact 2D convex containment.
+  - Uses `distanceToQuad()` with a soft Gaussian edge falloff margin for natural boundary bleed.
 - Translates continuous physical metrics into real-time shader uniforms:
   - **Proximity**: Modulates `signalLock` (0.0 to 1.0) and `noiseGain` (1.0 to 0.0).
   - **Velocity**: Modulates `rgbSplit` (chromatic aberration bursts) and `hJitter` (horizontal sync tear).
   - **Hand Coordinates**: Tracks normalized hand position `(uRippleCenter)` and activates localized ripple distortion `(uRippleStrength)` on the specific CRT quadrant where the hand is pointing.
+  - **Zap Surge**: Progressively amplifies `rgbSplit`, `hJitter`, and `vHold` during active channel zaps.
 
 #### 7. Global State Synchronization
 - Centralized in [`useAppStore`](../../src/core/StateManager.ts#L487).
@@ -160,6 +173,7 @@ Every 16.6 milliseconds (at 60 FPS), the system processes visual input from the 
 - Executed by [`SceneManager`](../../src/rendering/SceneManager.ts#L20) and [`compositeFragmentShader`](../../src/rendering/shaders/CompositeShader.ts#L8).
 - Projects the active `<video>` texture across a fullscreen quad.
 - Evaluates 6-screen UV partitioning, keystone quad pinning (`invBilinear`), CRT glass curvature, scanlines, phosphor mask, glitch distortions, and bezels in a **single GPU pass**.
+- Synchronizes with [`SkeletonOverlay`](../../src/rendering/SkeletonOverlay.ts), which maps skeletal joints and electric zap arcs into calibrated screen quads via `mapPointToCalibratedScreen()`.
 
 #### 10. Web Audio DSP Synthesis
 - Managed by [`AudioEngine`](../../src/audio/AudioEngine.ts#L9).
@@ -167,6 +181,7 @@ Every 16.6 milliseconds (at 60 FPS), the system processes visual input from the 
   - Video soundtrack (lowpass filter opens as signal locks).
   - Procedural RF TV static noise (attenuates as spectator approaches).
   - 15.734 kHz NTSC CRT flyback transformer whistle.
+  - Synthesized analog CRT rotary channel switch zap sounds (`playZapSound`) with directional pitch sweeps and exponential decay.
 
 ---
 

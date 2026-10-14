@@ -55,10 +55,10 @@ In vintage television, an analog antenna required physical alignment to resolve 
 | **Graphics Engine** | [Three.js 0.172](https://threejs.org/) + Custom GLSL Shaders | Single-pass 1080×1920 rendering, 2×3 matrix viewport partitioning, CRT curvature, scanlines, phosphor triads, keystone quad warping. |
 | **Computer Vision** | Google MediaPipe Tasks Vision (`@mediapipe/tasks-vision`) | Real-time body pose and hand landmark tracking running on GPU/WebAssembly at 60 FPS. |
 | **Reactive State** | [Zustand 5 (Vanilla Store)](https://github.com/pmndrs/zustand) | Centralized, reactive state store (`useAppStore`) driving shader uniforms, tracking metrics, and audio levels without UI framework overhead. |
-| **Sound Synthesis** | Web Audio API | Procedural white/pink static noise generator, 15.734 kHz NTSC flyback transformer whine, dynamic lowpass filtering. |
+| **Sound Synthesis** | Web Audio API | Procedural white/pink static noise generator, 15.734 kHz NTSC flyback transformer whine, rotary switch zap audio, dynamic lowpass filtering. |
 | **Cross-Window IPC** | `BroadcastChannel` API + `localStorage` | Zero-latency bidirectional communication between Main Stage (`/`), Calibration Console (`/calibration.html`), and Admin (`/admin`). |
-| **Backend & Ingestion** | Node.js (v20+) + Express 4 + `yt-dlp` + `ffmpeg` | Automated YouTube Shorts discovery, daily API quota tracking (`QuotaGuard`), faststart MP4 transcoding, local cache management. |
-| **Calibration GUI** | `lil-gui 0.20` + Custom Canvas Visualizer | Real-time on-site operator HUD with 24-point interactive corner quad pinning, keystone calibration, and test patterns. |
+| **Backend & Ingestion** | Node.js (v20+) + Express 4 + `ffmpeg-static` + `./bin/yt-dlp` | Consolidated local media binaries, automated YouTube Shorts discovery, daily API quota tracking (`QuotaGuard`), faststart MP4 transcoding, local cache management. |
+| **Calibration GUI** | `lil-gui 0.20` + Custom Canvas Visualizer | Real-time on-site operator HUD with 24-point interactive corner quad pinning, keystone calibration, frame styling, timeline scrubbing, interaction controls, and test patterns. |
 
 ---
 
@@ -82,11 +82,11 @@ docs/architecture/
 ### Quick Navigation
 1. **[01. System Topology & Data Flow](./01-system-topology-and-dataflow.md)**: How the optical camera feed transforms into audio-visual output across 6 CRT viewports.
 2. **[02. Frontend Core & State Management](./02-frontend-core-and-state.md)**: Deep dive into [`App.ts`](../../src/core/App.ts#L22), the Zustand store [`useAppStore`](../../src/core/StateManager.ts#L487), and [`SyncChannel`](../../src/core/SyncChannel.ts#L116).
-3. **[03. Rendering & GLSL Shader Pipeline](./03-rendering-and-glsl-pipeline.md)**: Single-pass composite fragment shader, closed-form inverse bilinear quad warping, and CRT glass simulation.
-4. **[04. Computer Vision & Human Antenna](./04-computer-vision-and-human-antenna.md)**: Optical landmark tracking, feature classification (poses, crowd density, rhythm, clothing chroma), and query synthesis.
-5. **[05. Audio Synthesis Engine](./05-audio-synthesis-engine.md)**: Real-time procedural audio graph, 15.734 kHz flyback resonance, and antenna modulation.
-6. **[06. Video Pipeline & Server Architecture](./06-video-pipeline-and-server.md)**: Express server routes, YouTube API integration, quota budget enforcement, and offline cache resilience.
-7. **[07. Calibration System & Installation Control Deck](./07-calibration-and-control-deck.md)**: Live operator calibration console, keystone dragging, test patterns, and web admin controls.
+3. **[03. Rendering & GLSL Shader Pipeline](./03-rendering-and-glsl-pipeline.md)**: Single-pass composite fragment shader, closed-form inverse bilinear quad warping, calibrated matrix geometries, and CRT glass simulation.
+4. **[04. Computer Vision & Human Antenna](./04-computer-vision-and-human-antenna.md)**: Optical landmark tracking, calibrated quad containment, feature classification (poses, crowd density, rhythm, clothing chroma), query synthesis, and Channel Zap interaction.
+5. **[05. Audio Synthesis Engine](./05-audio-synthesis-engine.md)**: Real-time procedural audio graph, 15.734 kHz flyback resonance, analog rotary channel switch zap synthesis, and antenna modulation.
+6. **[06. Video Pipeline & Server Architecture](./06-video-pipeline-and-server.md)**: Express server routes, YouTube API integration, quota budget enforcement, local binary consolidation (`MediaBinaries.ts`), and offline cache resilience.
+7. **[07. Calibration System & Installation Control Deck](./07-calibration-and-control-deck.md)**: Live operator calibration console, keystone dragging, frames configuration, interaction parameters, test patterns, and web admin controls.
 8. **[08. Hardware Deployment & Operations](./08-hardware-deployment-and-operations.md)**: Physical rack engineering, video distribution, camera placement, kiosk auto-boot, and 8-hour soak testing.
 
 ---
@@ -110,6 +110,9 @@ Even if the internet goes down, YouTube blocks an API key, or no MP4 files exist
 ### Mental Model 4: Multi-Window Operator Synchronization
 The primary display runs full-screen on the installation totem. Gallery technicians and operators can open a separate calibration window on a laptop or secondary screen ([`calibration.html`](../../calibration.html)). Both windows communicate in real time through [`SyncChannel.ts`](../../src/core/SyncChannel.ts#L116), allowing live keystone dragging, shader tuning, and preset switching without displaying UI overlays on the public art totem.
 
+### Mental Model 5: Calibrated Screen Quads Unify Vision, Skeleton & GPU Keystone Warping
+Physical CRTs in a totem rack exhibit tilt, keystone distortion, and bezel gaps. Rather than assuming rigid nominal rectangles, [`MatrixSplitter.ts`](../../src/rendering/MatrixSplitter.ts) derives 6 dynamic 2D quadrilaterals ([`computeCalibratedScreenQuads`](../../src/rendering/MatrixSplitter.ts)) from operator calibration offsets. Both the [`GestureMapper`](../../src/vision/GestureMapper.ts) (for antenna presence) and [`SkeletonOverlay`](../../src/rendering/SkeletonOverlay.ts) (for joints and lightning zap arcs) map normalized coordinates into these exact physical screen quads via bilinear interpolation ([`mapPointToCalibratedScreen`](../../src/rendering/MatrixSplitter.ts)), ensuring 1:1 spatial fidelity between the camera, participant body, and curved CRT glass.
+
 ---
 
 ## 5. 5-Minute Developer Quickstart
@@ -118,7 +121,7 @@ The primary display runs full-screen on the installation totem. Gallery technici
 - **Node.js**: v20 or higher (`node -v`)
 - **npm**: v10 or higher (`npm -v`)
 - **Webcam**: Built-in or external USB webcam
-- **Optional Tools**: `ffmpeg` and `yt-dlp` (required only for automated video downloading)
+- *Note*: External `ffmpeg` and `yt-dlp` system installations are **not required**. `ffmpeg-static` is installed via npm, and `yt-dlp` is automatically downloaded into `./bin/` during `npm install` (`postinstall`).
 
 ### Step 1: Install Dependencies
 ```bash
@@ -126,6 +129,7 @@ git clone <repo-url>
 cd v-feed-06
 npm install
 ```
+*(This automatically runs `scripts/setup-binaries.ts` to ensure local `./bin/yt-dlp` is installed).*
 
 ### Step 2: Configure Environment
 Copy the sample environment file:
@@ -135,7 +139,7 @@ cp .env.example .env
 *(Optional)* Add your `YOUTUBE_API_KEY` to `.env` if you wish to test live YouTube Shorts searching and ingestion. If you do not have an API key, you can still develop all graphics, tracking, and audio features using local fallback videos or the procedural feed.
 
 ### Step 3: Generate Local Fallback Video (Optional)
-If you have `ffmpeg` installed, you can generate a synthetic 1080×1920 test video in seconds:
+Generate a synthetic 1080×1920 test video in seconds using the bundled `ffmpeg-static` engine:
 ```bash
 npm run generate:sample
 ```

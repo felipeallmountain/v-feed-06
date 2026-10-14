@@ -141,7 +141,7 @@ vec2 invBilinear(vec2 p, vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
 }
 ```
 
-### Corner Offsets Array
+### Corner Offsets Array & Calibrated Screen Geometry
 The shader receives `uniform vec2 uCorners[24]` computed by [`computeAllScreenCorners()`](../../src/rendering/MatrixSplitter.ts#L141). 
 Each screen $i \in [0..5]$ has 4 vertex offsets:
 - `p0 = Bottom-Left (BL)`
@@ -150,6 +150,23 @@ Each screen $i \in [0..5]$ has 4 vertex offsets:
 - `p3 = Top-Left (TL)`
 
 Curators can drag any of the 24 corner handles in real time on the [Calibration Console](./07-calibration-and-control-deck.md) to align the projected image precisely to the curved glass bezel of each physical CRT.
+
+### 4.1 Calibrated Screen Quads (`MatrixSplitter.ts`)
+To bridge the gap between GPU fragment warping, optical vision tracking, and 2D canvas overlays, [`MatrixSplitter.ts`](../../src/rendering/MatrixSplitter.ts) derives exact 2D convex geometries from active calibration transforms:
+
+1. **[`computeCalibratedScreenQuads(shaders)`](../../src/rendering/MatrixSplitter.ts#L131)**:
+   Calculates the 4 vertices (`tl`, `tr`, `br`, `bl`), bounding box (`bounds`), and geometric centroid (`center`) for all 6 CRT screens in normalized camera/screen space $[0, 1]^2$, accounting for per-screen offsets, discrete 90° rotations, continuous fine rotation, horizontal/vertical flips, and 24-point corner offsets.
+
+2. **[`isPointInQuad(px, py, quad)`](../../src/rendering/MatrixSplitter.ts#L190)**:
+   Tests whether an arbitrary 2D point $(px, py)$ lies inside a convex quadrilateral using the sign consistency of 2D cross-products across the 4 directed perimeter edges:
+   $$\text{cross}_i = (x_{i+1} - x_i)(py - y_i) - (y_{i+1} - y_i)(px - x_i)$$
+   A point is interior if and only if all cross-products have identical signs.
+
+3. **[`distanceToQuad(px, py, quad)`](../../src/rendering/MatrixSplitter.ts#L225)**:
+   Computes the exact Euclidean distance from a point to the nearest perimeter segment of the quad, returning `0.0` when the point is interior. Used by [`GestureMapper`](../../src/vision/GestureMapper.ts) to calculate soft Gaussian boundary bleed (margin $0.08$, $\sigma = 0.035$).
+
+4. **[`mapPointToCalibratedScreen(x, y, quads, matrixSplit)`](../../src/rendering/MatrixSplitter.ts#L245)**:
+   Maps normalized camera coordinates $(x, y) \in [0, 1]^2$ to the warped physical screen quad via bilinear quad interpolation. This ensures that skeletal overlays, reticles, and electric zap arcs match the physical CRT monitors 1:1.
 
 ---
 
@@ -236,7 +253,13 @@ Located in [`src/rendering/SkeletonOverlay.ts`](../../src/rendering/SkeletonOver
   - `cyan`: Cyberpunk turquoise (`#00f3ff`).
   - `amber`: Monochrome P3 amber (`#ffb000`).
   - `magenta`: Synthwave violet (`#ff007f`).
-- **Tube Curvature Conformance**: Skeletons are mathematically warped using the identical barrel curvature formula as the underlying WebGL shader so drawn bones align perfectly with the distorted CRT video image.
+- **Calibrated Quad Conformance**: All skeletal joints and hand landmarks are mapped dynamically via [`mapPointToCalibratedScreen()`](../../src/rendering/MatrixSplitter.ts#L245). This guarantees that bone lines, joint dots, and reticles align 1:1 with the physical, keystoned, and rotated CRT glass monitors when `matrixSplit` is enabled.
+- **Interactive Channel Zap Lightning Effects**:
+  - **`drawLightningArc()`**: Generates multi-segment jagged fractal electrical arcs with probabilistic sub-branch forks connecting body joints (wrists, elbows, shoulders, ankles).
+  - **`drawPlasmaJointSparks()`**: Radiates explosive radial plasma sparks and electrical bursts around key joint points during zap discharge.
+  - **Targeting Discharge Beam**: Emits a high-voltage lightning arc from the participant's wrist or nose directly to the center of the targeted CRT monitor, accompanied by a dynamic shockwave overcharge ring.
+  - **Directional Color Signatures**: Yellow (`#ffd166`) for previous video, cyan (`#00f0ff`) for next video, and emerald green (`#3ddc97`) for random channel jumps.
+- **Tube Curvature Conformance**: In single-tube mode, skeletons are mathematically warped using the barrel curvature formula so drawn bones match the CRT glass geometry.
 
 ---
 

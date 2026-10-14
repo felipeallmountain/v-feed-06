@@ -81,7 +81,45 @@ Record usage      Zero API units spent
 
 Located in [`server/services/VideoIngestService.ts`](../../server/services/VideoIngestService.ts), the [`VideoIngestService`](../../server/services/VideoIngestService.ts#L108) automates video downloading, transcoding, disk storage, and catalog pruning.
 
-### 3.1 Transcoding Pipeline (`yt-dlp` + `ffmpeg`)
+### 3.1 Consolidated Media Binaries (`MediaBinaries.ts` & `setup-binaries.ts`)
+To eliminate brittle system dependencies (such as requiring operators to install `ffmpeg` or `yt-dlp` via Homebrew, apt, or choco), V-FEED [06] fully encapsulates its media toolchain within the project directory:
+
+```
+[ npm install ] ──► postinstall hook ──► scripts/setup-binaries.ts
+                                                │
+                                                ▼
+                                   Downloads latest standalone yt-dlp
+                                   to: ./bin/yt-dlp (chmod 0755)
+
+[ Server Startup / Video Download ]
+                │
+                ▼
+      MediaBinaries.resolveMediaBinaries()
+      ├── ffmpeg: resolves node_modules/ffmpeg-static/ffmpeg (fallback: system PATH)
+      └── yt-dlp: resolves ./bin/yt-dlp (fallback: system PATH -> auto-downloader)
+                │
+                ▼
+      Merges binary directories into process.env.PATH
+      Injects --ffmpeg-location flag into yt-dlp child processes
+```
+
+1. **`ffmpeg-static` Integration**:
+   - `ffmpeg` is declared directly in `package.json` dependencies via `ffmpeg-static`.
+   - [`resolveMediaBinaries()`](../../server/services/MediaBinaries.ts#L36) tests the bundled executable on boot. If present, it uses this path directly, completely insulating the installation from system-level ffmpeg version conflicts.
+2. **Automated `yt-dlp` Installer (`scripts/setup-binaries.ts`)**:
+   - Downloads the platform-specific standalone executable directly from GitHub releases (`yt-dlp` on macOS/Linux, `yt-dlp.exe` on Windows).
+   - Writes to a temporary file, sets executable permissions (`0o755`), atomically renames to `./bin/yt-dlp`, and verifies `--version`.
+   - **Postinstall Hook**: Runs automatically on `npm install`. If offline during postinstall, exits cleanly with a warning and triggers fallback download upon first ingestion attempt.
+   - **Manual CLI Commands**:
+     - `npm run setup:binaries`: Verifies local binary integrity or downloads if missing.
+     - `npm run update:ytdlp`: Forcefully downloads the latest upstream `yt-dlp` release.
+3. **Sub-Process Environment Merging**:
+   - `MediaBinaries.ts` constructs a merged `PATH` environment variable containing directory paths for both resolved binaries.
+   - Passes `--ffmpeg-location` to `yt-dlp` during spawn so format merging (`bestvideo+bestaudio`) succeeds without relying on global system paths.
+4. **Synthetic Video Generator Support**:
+   - [`scripts/generate-sample-video.sh`](../../scripts/generate-sample-video.sh) automatically checks `node_modules/ffmpeg-static/ffmpeg` first before falling back to system `ffmpeg`.
+
+### 3.2 Transcoding Pipeline (`yt-dlp` + `ffmpeg`)
 When a YouTube Short is scheduled for ingestion:
 1. `yt-dlp` fetches the best vertical format stream (max 1080p).
 2. `ffmpeg` transcodes the video to an exhibition-optimized MP4 container:
@@ -91,20 +129,20 @@ When a YouTube Short is scheduled for ingestion:
    - **Max Duration**: Capped at 65 seconds (Shorts format).
 
 ```bash
-# Equivalent underlying transcoding command
-yt-dlp -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
-       --recode-video mp4 \
-       --postprocessor-args "ffmpeg:-movflags +faststart -c:v libx264 -preset fast -c:a aac" \
-       -o "public/fallback-videos/%(id)s.mp4" <VIDEO_URL>
+# Equivalent underlying transcoding command executed via MediaBinaries
+./bin/yt-dlp -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+             --ffmpeg-location "<path-to-ffmpeg-static>" \
+             --merge-output-format mp4 \
+             -o "public/fallback-videos/%(id)s.mp4" <VIDEO_URL>
 ```
 
-### 3.2 Persistent Catalog Manifest
+### 3.3 Persistent Catalog Manifest
 All local files are cataloged in [`public/fallback-videos/manifest.json`](../../public/fallback-videos/manifest.json):
 - Video ID, Title, Channel, Duration.
 - Local filename, file size, download timestamp.
 - Associated search query trigger.
 
-### 3.3 Storage Quotas & Auto-Pruning
+### 3.4 Storage Quotas & Auto-Pruning
 Installations cannot be allowed to exhaust the host computer's hard drive:
 - **Maximum Storage Cap**: Configurable (default: 2,000 MB).
 - **Maximum Video Cap**: Configurable (default: 50 videos).

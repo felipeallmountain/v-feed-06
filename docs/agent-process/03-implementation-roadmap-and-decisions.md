@@ -48,6 +48,17 @@ This document records the chronological development phases and key Architectural
 - Developed shell launch automation scripts (`scripts/kiosk.sh`) for unattended boot on exhibition hardware.
 - Authored sample video generation utility (`scripts/generate-sample-video.sh`).
 
+### Phase 8: Physical Matrix Calibration, Frames & Interactive Channel Zapping
+- Developed `computeCalibratedScreenQuads()`, `isPointInQuad()`, `distanceToQuad()`, and `mapPointToCalibratedScreen()` in `MatrixSplitter.ts` to align webcam vision tracking and skeletal overlays directly to keystoned CRT tube geometries.
+- Created snappy pose-based Channel Zapping (`zapEnabled`, `zapNavMode`, `zapHoldDurationMs`, `zapCooldownSec`) with electric lightning body arcs and plasma sparks in `SkeletonOverlay.ts`.
+- Synthesized analog CRT rotary channel switch sounds (`playZapSound`) in `AudioEngine.ts`.
+- Expanded `CalibrationConsole.ts` with interactive frames controls, timeline scrubber, and comprehensive multi-tier persistence for interaction state.
+
+### Phase 9: Project Dependency Consolidation & Self-Contained Media Binaries
+- Bundled `ffmpeg-static` directly in project dependencies.
+- Implemented `scripts/setup-binaries.ts` to automatically download platform-specific standalone `yt-dlp` to `./bin/yt-dlp` during `npm install` (`postinstall`).
+- Built `MediaBinaries.ts` service with automatic environment PATH merging and `--ffmpeg-location` flag passing, removing all global OS package requirements (`brew` / `apt`).
+
 ---
 
 ## 2. Architectural Decision Records (ADRs)
@@ -71,3 +82,23 @@ This document records the chronological development phases and key Architectural
 - **Context**: Modern web browsers enforce strict autoplay policies blocking Web Audio context initialization and `getUserMedia` camera access without prior explicit user gesture.
 - **Decision**: Provide an un-styled `#boot-hint` overlay with a clear `#allow-camera` button that triggers user activation explicitly.
 - **Rationale**: Prevents silent camera rejection, handles embedded iframe restrictions, and ensures Web Audio API context unlocks reliably on first click.
+
+### ADR-05: Consolidated Local Media Binaries vs Global System Package Installations
+- **Context**: Exhibition computers frequently run locked-down OS environments without administrative rights or pre-installed package managers (`brew`, `apt`).
+- **Decision**: Declare `ffmpeg-static` in `package.json` and download standalone `yt-dlp` into local `./bin/` via a `postinstall` hook and `scripts/setup-binaries.ts`. Resolve binaries dynamically via `server/services/MediaBinaries.ts` with sub-process environment PATH merging.
+- **Rationale**: Completely insulates the application from OS-level package quirks, guarantees reproducible deployments, and allows instant offline execution.
+
+### ADR-06: Calibrated Screen Quadrilateral Geometry for Vision & Overlays vs Rigid Viewport Rectangles
+- **Context**: Physical CRT monitors exhibit analog raster keystone distortion, physical chassis tilt, and non-uniform bezels. Evaluating visitor hand presence using rigid 2×3 rectangles resulted in dead zones and mismatched overlay alignments.
+- **Decision**: Derive exact 2D convex quads (`computeCalibratedScreenQuads`) directly from the operator's calibrated keystone parameters. Use 2D cross-product containment (`isPointInQuad`) with Gaussian boundary bleed in `GestureMapper.ts`, and map joints/arcs into quad space via bilinear interpolation (`mapPointToCalibratedScreen`).
+- **Rationale**: Synchronizes the computer vision optical space, 2D canvas overlays, and GLSL fragment warping 1:1 with the physical glass monitors.
+
+### ADR-07: Interactive Channel Zapping with Dual-Track Debouncing
+- **Context**: While slow ambient YouTube query synthesis (1.8s hold + 10s cooldown) works well for crowd density and kinetic state shifts, spectators executing intentional CRT signature poses expect immediate, responsive feedback.
+- **Decision**: Introduce a dual-track interaction model. Poses trigger an instant Channel Zap with tailored snappy timings (`zapHoldDurationMs` 400ms–1200ms, `zapCooldownSec` 2.0s), high-voltage electric body arcs, and analog rotary switch audio, while preserving ambient query generation for macro gallery states.
+- **Rationale**: Dramatically enhances visitor agency and engagement while preserving the installation's contemplative ambient broadcast behavior.
+
+### ADR-08: Unified Multi-Tier State Persistence Architecture
+- **Context**: Exhibition gallery power cycles or browser cache clearings could wipe painstakingly calibrated keystone corner offsets, frames styling, and interaction parameters.
+- **Decision**: Structure calibration state into a unified, extensible JSON schema saved across three redundant tiers: (1) `localStorage`, (2) server disk file via `POST /api/calibration` writing to `config/calibration.json` and `public/calibration.json`, and (3) operator file export/import. Include interaction and frame settings in the schema.
+- **Rationale**: Guarantees zero data loss across power outages, allows migrating configurations between production machines, and provides instant fallback.

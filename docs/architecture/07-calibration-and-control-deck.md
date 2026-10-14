@@ -80,6 +80,40 @@ The console can override video playback with precision test patterns:
 - **Focus Crosshairs**: High-contrast concentric rings to tune analog flyback focus pots.
 - **Solid Color**: Full white, red, green, or blue field to check tube phosphor purity.
 
+### 2.4 Tracking & Optical Calibration Folder
+Fine-tunes the computer vision pipeline to gallery lighting and sensor mountings:
+- **Confidence Threshold**: Minimum landmark detection confidence (0.1 to 0.9).
+- **Camera Rotation**: Supports portrait orientations: `0°`, `90° CW`, `180°`, and `270° CCW`.
+- **Distance Scale & Offset**: Calibrates shoulder-span optical distance estimation to real-world meters.
+- **Antenna Coupling**: Adjusts `antennaHandBoost`, `antennaFalloffRadius`, and `antennaSmoothing`.
+
+### 2.5 Interaction & Channel Zap Controls
+Curators can fine-tune participant interaction dynamics:
+- **Ambient Interaction**: Master `enabled` toggle, ambient `holdSec` (0.8s to 3.5s), and `cooldownSec` (5s to 30s).
+- **Channel Zap Navigation**:
+  - `zapEnabled`: Toggles instant channel switching upon performing signature CRT poses.
+  - `zapNavMode`: Selects between `'sequential'`, `'directional'` (left column = prev, right column = next), or `'random'`.
+  - `zapHoldSec`: Snappy hold duration (0.4s to 3.0s).
+  - `zapCooldownSec`: Rapid cooldown between zaps (1.0s to 10.0s).
+  - `zapVisualIntensity`: Multiplier for lightning arcs, plasma sparks, and glitch surges.
+
+### 2.6 Screen Frames, Badges & Pose Guides
+Customizes the aesthetic overlays on each monitor:
+- **Shape Styles**: `'crt-tube'`, `'bracket-corners'`, `'rounded-rect'`, `'industrial-bezel'`, `'minimal-ticks'`.
+- **Curvature Conformance**: `followTubeCurvature` and `curvatureScale` ensure frames follow CRT barrel warping.
+- **Pose Guides**: Toggles target pose silhouettes, position (`top-left`, `top-right`, etc.), scale, opacity, and active illumination.
+- **Query Banners & Badges**: Per-screen query message toggles, antenna metrics, and `LIVE FEED` badge.
+- **Factory Reset**: `Reset Frames` button immediately restores `DEFAULT_FRAME_STATE`.
+
+### 2.7 Video Playback & Timeline Scrubber
+- **Source Mode**: Toggle between `'live'`, `'cache'`, and `'grid'`.
+- **Timeline Scrubber**: Interactive progress bar allowing curators to scrub through vertical video playback with real-time `timeController` readouts (`MM:SS / MM:SS`).
+
+### 2.8 Real-Time Operational Readouts
+The console updates readouts at 30 FPS without triggering React re-renders:
+- **Diagnostics**: Live FPS, estimated spectator distance (`0.00 m`), detected people (`0 detected`).
+- **Interaction Dashboard**: Active Pose, Audience Density, Kinetic State, Clothing Chroma, Hold Progress %, Cooldown countdown, Zap status (`Idle` / `Active`), YouTube Quota usage %, and Now Playing title.
+
 ---
 
 ## 3. Installation Display Presets
@@ -97,7 +131,7 @@ To ensure fast setup across different exhibition venues, preset configurations a
 
 ## 4. Multi-Tier Persistence Architecture
 
-Calibration data is saved across three redundant tiers to guarantee settings are never lost after a gallery power cycle:
+Calibration data—including shader parameters, 24-point keystone quads, frame styles, tracking settings, audio levels, and **interaction/zap configurations**—is serialized into a unified JSON structure and saved across three redundant tiers:
 
 ```
 [ Operator clicks "Save to Server" ]
@@ -107,7 +141,7 @@ Calibration data is saved across three redundant tiers to guarantee settings are
    Tier 1: Browser Storage                    Tier 2: Server Disk File
    localStorage.setItem(                      POST /api/calibration
      'vfeed-calibration', JSON                 Writes to: config/calibration.json
-   )                                          (Survives browser cache wipes)
+   )                                          (and public/calibration.json)
                │
                ▼
    Tier 3: Portable Backup File

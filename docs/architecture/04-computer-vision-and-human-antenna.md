@@ -139,7 +139,7 @@ To match video aesthetics with the audience's wardrobe, an offscreen 48×48 canv
 
 ---
 
-## 5. Interaction Controller & Decision Ladder (`InteractionController.ts`)
+## 5. Interaction Controller, Decision Ladder & Channel Zapping (`InteractionController.ts`)
 
 Located in [`src/vision/InteractionController.ts`](../../src/vision/InteractionController.ts#L20):
 
@@ -150,23 +150,34 @@ When multiple features occur simultaneously (e.g. two people dancing while one r
 [ EXTRACTED FEATURES ]
          │
          ▼
-[ Priority 1: Key Poses ] ──────────► If pose != 'NONE' ─────────► PROCEED TO HOLD TIMER
+[ Priority 1: Key Poses ] ──────────► If pose != 'NONE' ─────────► Check Zap vs Query
          │ (No Pose Detected)
          ▼
-[ Priority 2: Audience Density ] ───► If density != 'EMPTY' ─────► PROCEED TO HOLD TIMER
+[ Priority 2: Audience Density ] ───► If density != 'EMPTY' ─────► Standard Hold Timer (1.8s)
          │ (Density is Default)
          ▼
-[ Priority 3: Kinetic Dynamics ] ───► If kinetics != 'STEADY' ───► PROCEED TO HOLD TIMER
+[ Priority 3: Kinetic Dynamics ] ───► If kinetics != 'STEADY' ───► Standard Hold Timer (1.8s)
 ```
 
-### The 1.8-Second Sustained Hold Debounce
-Accidental gestures must not switch videos. The visitor must sustain the state continuously for **1.8 seconds (1800 ms)**:
-- `holdProgress` ramps smoothly from `0.0` to `1.0`.
-- The [Skeleton Overlay](./03-rendering-and-glsl-pipeline.md) renders a glowing circular progress gauge around the visitor's head.
-- If the visitor breaks the pose before 1.8s, `holdTimeMs` resets immediately.
+### Dual-Track Debounce: Channel Zapping vs. Ambient Queries
+The controller supports two distinct operational modes depending on whether `zapEnabled` is active:
 
-### Cooldown Timer
-Once a query is triggered, a **10-second cooldown timer** locks further query triggers while continuing to update continuous antenna noise and signal lock.
+1. **Snappy Pose Channel Zapping (`zapEnabled = true`)**:
+   - Matching any of the 6 signature CRT poses initiates an immediate **Channel Zap** rather than a text query.
+   - **Snappy Hold Timer**: Configurable via `zapHoldDurationMs` (default: **400ms – 1,200ms**).
+   - **Fast Cooldown**: Configurable via `zapCooldownSec` (default: **2.0s**).
+   - **Navigation Modes (`zapNavMode`)**:
+     - `'sequential'`: Advances sequentially through the video queue (`next`).
+     - `'directional'`: Left-column CRTs (CRT 01, 03, 05) navigate to the previous video (`prev`); right-column CRTs (CRT 02, 04, 06) advance to the next video (`next`).
+     - `'random'`: Jumps to an unpredictable index in the video playlist.
+   - **Multi-Modal Zap Feedback**: Dispatches high-voltage lightning arcs in [`SkeletonOverlay`](../../src/rendering/SkeletonOverlay.ts), temporary glitch surges in [`GestureMapper`](../../src/vision/GestureMapper.ts), and rotary switch zap sounds in [`AudioEngine`](../../src/audio/AudioEngine.ts).
+
+2. **Ambient Semantic Query Hold (`zapEnabled = false` or non-pose candidate)**:
+   - Accidental gestures must not switch videos. The visitor must sustain the state continuously for **1.8 seconds (1800 ms)**:
+   - `holdProgress` ramps smoothly from `0.0` to `1.0`.
+   - The [Skeleton Overlay](./03-rendering-and-glsl-pipeline.md) renders a glowing circular progress gauge around the visitor's head.
+   - If the visitor breaks the posture before 1.8s, `holdTimeMs` resets immediately.
+   - **10-Second Cooldown**: Locks further query triggers while continuing continuous antenna noise and signal lock.
 
 ---
 
@@ -229,14 +240,26 @@ When a gesture completes its 1.8-second hold, [`synthesizeBroadcastQuery()`](../
 
 Located in [`src/vision/GestureMapper.ts`](../../src/vision/GestureMapper.ts#L8), this module translates continuous physical movement directly into GLSL uniforms and Web Audio levels every frame:
 
+### Calibrated Screen Quadrilateral Mapping
+Rather than evaluating hand proximity using rigid rectangular bounding boxes, [`GestureMapper`](../../src/vision/GestureMapper.ts#L110) queries the active calibrated screen geometries from [`computeCalibratedScreenQuads(store.shaders)`](../../src/rendering/MatrixSplitter.ts#L131):
+- **Exact Quad Containment**: Tests whether each landmark dot falls within the keystoned screen quad using [`isPointInQuad()`](../../src/rendering/MatrixSplitter.ts#L190).
+- **Soft Boundary Bleed**: For landmarks outside the quad, [`distanceToQuad()`](../../src/rendering/MatrixSplitter.ts#L225) computes the Euclidean distance to the nearest edge. If within a margin of 0.08 ($~8\%$ viewport width), a Gaussian bleed factor is applied:
+  $$\text{bleed} = \exp\left(-\frac{\text{dist}^2}{2 \times 0.035^2}\right) \times 0.4$$
+- This guarantees natural, organic antenna tuning even when CRTs are mounted with physical tilt or keystone warping.
+
 ### Signal Lock & Static Dissipation
 $$\text{lock} = \text{clamp}\left(1.0 - \frac{\text{distance} - 1.0}{2.0}, 0.0, 1.0\right)$$
 $$\text{noiseGain} = 1.0 - \text{lock}$$
 As a visitor steps from 3m to 1m, RF static noise drops linearly to 0% and the video locks into focus.
 
-### Velocity Chromatic Aberration
+### Velocity Chromatic Aberration & Zap Surge
 $$\text{rgbSplit} = \min(0.08, \text{velocity} \times 0.25)$$
 Sudden physical movements produce horizontal color fringes on phosphor lines.
+
+**Channel Zap Surge**: During active pose zapping (`zapProgress > 0`), [`GestureMapper`](../../src/vision/GestureMapper.ts#L261) injects high-voltage electrical distortion into shader uniforms:
+- $\text{rgbSplit} = \min(2.5, \text{rgbSplit} + \text{factor} \times 0.95)$
+- $\text{hJitter} = \min(1.5, \text{hJitter} + \text{factor} \times 0.75)$
+- $\text{vHold} = \min(1.0, \text{vHold} + \sin(\text{zapProgress} \cdot \pi) \times 0.35)$
 
 ### Hand Interference Targeting
 Normalized hand coordinates are translated directly to the 2×3 matrix:

@@ -161,8 +161,9 @@ The CLI dashboard displays real-time statistics:
 - **Automated Report Generation**: When stopped, generates a timestamped report in [`reports/perf-report-<timestamp>.md`](../../reports/) and updates `reports/perf-report-latest.md`.
 
 ### Diagnostic & Maintenance Scripts
+- **Binary Setup & Updates**: [`scripts/setup-binaries.ts`](../../scripts/setup-binaries.ts) (`npm run setup:binaries` or `npm run update:ytdlp`) ensures the standalone `yt-dlp` executable is present and executable in `./bin/yt-dlp`.
 - **Camera Rotation Verification**: [`scripts/test-camera-rotation.ts`](../../scripts/test-camera-rotation.ts) (`npx tsx scripts/test-camera-rotation.ts`) validates coordinate rotation matrices (0°, 90°, 180°, 270°) for vertical camera rigs.
-- **Cache Purge**: [`scripts/clear-cache.ts`](../../scripts/clear-cache.ts) (`npm run clear-cache`) safely cleans temp files, logs, and expired video assets.
+- **Cache Purge**: [`scripts/clear-cache.ts`](../../scripts/clear-cache.ts) (`npm run clear:cache`) safely cleans temp files, logs, and expired video assets.
 
 ---
 
@@ -187,6 +188,10 @@ The CLI dashboard displays real-time statistics:
 ### Issue 5: Calibration Changes in Console Do Not Affect Main Stage
 - **Cause**: Cross-window `BroadcastChannel` is disconnected.
 - **Resolution**: Check the connection indicator badge on `calibration.html`. If it reads `○ WAITING FOR MAIN STAGE...`, ensure both windows are running on the same browser origin and that the main stage tab is active and not suspended by background tab throttling.
+
+### Issue 6: Missing or Broken Media Downloader (`yt-dlp` / `ffmpeg`)
+- **Cause**: Standalone `yt-dlp` binary missing from `./bin/` or `ffmpeg-static` missing from `node_modules`.
+- **Resolution**: Run `npm run setup:binaries` to verify or redownload the standalone executable to `./bin/yt-dlp`. If the YouTube format extractor is outdated, run `npm run update:ytdlp` to force-update to the latest upstream release. Run `npm install` to ensure `ffmpeg-static` is installed.
 
 ---
 
